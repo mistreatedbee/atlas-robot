@@ -7,7 +7,9 @@ import statistics
 import numpy as np
 import pytest
 
-from atlas.features.indicators import atr, bollinger, ema, macd, rsi, sma, true_range, wilder
+from atlas.features.indicators import (
+    adx, atr, bollinger, confirmed_swings, ema, macd, rsi, sma, stochastic, true_range, wilder,
+)
 from atlas.features.segments import GapPolicy, per_segment, segment_ids
 from atlas.sessions import XauCfd
 
@@ -122,6 +124,11 @@ INDICATORS = {
     "atr": lambda h, l, c: atr(h, l, c, 14),
     "bb_upper": lambda h, l, c: bollinger(c, 20)[2],
     "macd_signal": lambda h, l, c: macd(c)[1],
+    "stoch_d": lambda h, l, c: stochastic(h, l, c, 14, 3)[1],
+    "adx": lambda h, l, c: adx(h, l, c, 14)[0],
+    "minus_di": lambda h, l, c: adx(h, l, c, 14)[2],
+    "swing_high": lambda h, l, c: confirmed_swings(h, l, 3)[0],
+    "swing_low": lambda h, l, c: confirmed_swings(h, l, 3)[1],
 }
 
 
@@ -176,3 +183,65 @@ def test_unexpected_gap_starts_new_segment_and_indicators_restart():
 def test_segments_require_increasing_times():
     with pytest.raises(ValueError):
         segment_ids(bars([utc_ms(2026, 7, 14, 10), utc_ms(2026, 7, 14, 10)]), XauCfd(), GapPolicy.BREAK_ON_ANY_GAP)
+
+
+# ---- stochastic / ADX / swings -----------------------------------------------------------------------
+
+def test_stochastic_hand_values():
+    h, l, c = [10, 11, 12, 13], [8, 9, 10, 9], [9, 10, 11, 12]
+    k, d = stochastic(h, l, c, n=3, d=2)
+    # bar2: HH=12 LL=8 -> 100*(11-8)/4 = 75 ; bar3: HH=13 LL=9 -> 100*(12-9)/4 = 75
+    assert same(k, [nan, nan, 75, 75]) and same(d, [nan, nan, nan, 75])
+    flat_k, _ = stochastic([5] * 4, [5] * 4, [5] * 4, n=3)
+    assert np.isnan(flat_k).all()
+
+
+def ref_adx(h, l, c, n):
+    """Independent naive ADX with the same pinned conventions."""
+    pdm, mdm, tr = [nan], [nan], [nan]
+    for i in range(1, len(h)):
+        up, dn = h[i] - h[i - 1], l[i - 1] - l[i]
+        pdm.append(up if up > dn and up > 0 else 0.0)
+        mdm.append(dn if dn > up and dn > 0 else 0.0)
+        tr.append(max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])))
+
+    def wild(x):
+        out, acc = [nan] * len(x), None
+        vals = [(i, v) for i, v in enumerate(x) if not math.isnan(v)]
+        for count, (i, v) in enumerate(vals, start=1):
+            if count < n:
+                continue
+            acc = sum(v2 for _, v2 in vals[:n]) / n if count == n else (acc * (n - 1) + v) / n
+            out[i] = acc
+        return out
+    st, sp, sm = wild(tr), wild(pdm), wild(mdm)
+    dx = []
+    for a, b, t in zip(sp, sm, st):
+        if math.isnan(t):
+            dx.append(nan)
+            continue
+        pdi, mdi = 100 * a / t, 100 * b / t
+        dx.append(100 * abs(pdi - mdi) / (pdi + mdi) if pdi + mdi > 0 else 0.0)
+    return wild(dx)
+
+
+def test_adx_matches_reference(walk):
+    h, l, c = walk
+    assert same(adx(h, l, c, 14)[0], ref_adx(list(h), list(l), list(c), 14))
+    assert np.isnan(adx(h, l, c, 14)[0][:27]).all() and not np.isnan(adx(h, l, c, 14)[0][27])
+
+
+def test_adx_strong_trend_is_high():
+    h = np.arange(100.0, 160.0)
+    a, pdi, mdi = adx(h + 0.5, h - 0.5, h, 14)
+    assert a[-1] > 90 and pdi[-1] > mdi[-1]
+
+
+def test_swings_are_reported_only_after_confirmation():
+    high = [1, 2, 5, 2, 1, 1, 1]
+    low = [1, 1, 1, 1, 0, 1, 1]
+    hi, lo = confirmed_swings(high, low, k=2)
+    # swing high 5 at bar 2 is confirmed at bar 4 (2 bars later), never before
+    assert same(hi, [nan, nan, nan, nan, 5, 5, 5])
+    # swing low 0 at bar 4 is confirmed at bar 6
+    assert same(lo, [nan, nan, nan, nan, nan, nan, 0])

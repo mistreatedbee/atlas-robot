@@ -117,3 +117,64 @@ def macd(close, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[Array,
     line = ema(close, fast) - ema(close, slow)
     sig = ema(line, signal)
     return line, sig, line - sig
+
+
+def stochastic(high, low, close, n: int = 14, d: int = 3) -> tuple[Array, Array]:
+    """%K = 100 (c - lowest low_n) / (highest high_n - lowest low_n); NaN on a flat range. %D = SMA_d(%K)."""
+    h, l, c = _as_float(high), _as_float(low), _as_float(close)
+    _check_period(n)
+    k = np.full(c.shape, np.nan)
+    if len(c) >= n:
+        hh = np.lib.stride_tricks.sliding_window_view(h, n).max(axis=1)
+        ll = np.lib.stride_tricks.sliding_window_view(l, n).min(axis=1)
+        rng = hh - ll
+        with np.errstate(divide="ignore", invalid="ignore"):
+            k[n - 1:] = np.where(rng > 0, 100.0 * (c[n - 1:] - ll) / rng, np.nan)
+    return k, sma(k, d)
+
+
+def adx(high, low, close, n: int = 14) -> tuple[Array, Array, Array]:
+    """Wilder ADX with +DI/-DI. Smoothing = Wilder average seeded by SMA (pinned; TA-Lib's sum-based seeding
+    gives the same DI ratios but a different warm-up). Bar 0 has no previous bar, so all series start at bar 1.
+    Returns (adx, plus_di, minus_di)."""
+    h, l, c = _as_float(high), _as_float(low), _as_float(close)
+    _check_period(n)
+    up = np.concatenate(([np.nan], np.diff(h)))
+    down = np.concatenate(([np.nan], -np.diff(l)))
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0) + up * 0  # "+ up*0" keeps the NaN at bar 0
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0) + down * 0
+    tr = true_range(h, l, c)
+    tr[0] = np.nan
+    s_tr, s_p, s_m = wilder(tr, n), wilder(plus_dm, n), wilder(minus_dm, n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pdi = np.where(s_tr > 0, 100.0 * s_p / s_tr, np.nan)
+        mdi = np.where(s_tr > 0, 100.0 * s_m / s_tr, np.nan)
+        total = pdi + mdi
+        dx = np.where(total > 0, 100.0 * np.abs(pdi - mdi) / total, 0.0)
+    dx = np.where(np.isnan(pdi) | np.isnan(mdi), np.nan, dx)
+    return wilder(dx, n), pdi, mdi
+
+
+def confirmed_swings(high, low, k: int = 3) -> tuple[Array, Array]:
+    """Market-structure swings, reported only once CONFIRMED.
+
+    A swing high at bar j: high[j] > every high in the k bars before it and >= every high in the k bars after it.
+    It is only known at bar j + k, so output[t] = price of the most recent swing high confirmed by bar t.
+    Swing lows are the mirror image. Values are NaN until the first confirmation.
+    """
+    h, l = _as_float(high), _as_float(low)
+    _check_period(k)
+    last_hi = np.full(h.shape, np.nan)
+    last_lo = np.full(l.shape, np.nan)
+    cur_hi = cur_lo = np.nan
+    for t in range(len(h)):
+        j = t - k  # candidate whose right-hand window is complete at t
+        if j - k >= 0:
+            left_h, right_h = h[j - k:j], h[j + 1:t + 1]
+            if h[j] > left_h.max() and h[j] >= right_h.max():
+                cur_hi = h[j]
+            left_l, right_l = l[j - k:j], l[j + 1:t + 1]
+            if l[j] < left_l.min() and l[j] <= right_l.min():
+                cur_lo = l[j]
+        last_hi[t], last_lo[t] = cur_hi, cur_lo
+    return last_hi, last_lo
