@@ -24,7 +24,7 @@
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
 Tests: **284 passed, 1 skipped (live, opt-in)**; the live test passes when enabled.
-Version control: local git only, no remote.
+Version control: git; remote https://github.com/mistreatedbee/atlas-robot (PUBLIC, by owner's decision 2026-10-11).
 
 ## Backlog (priority order)
 
@@ -37,8 +37,6 @@ Version control: local git only, no remote.
 | 5 | Paper-trading simulator (live-like loop on recorded data) | No | Same decisions as the backtester on identical input |
 | 6 | Broker integration research (MT5 read-only access options) | No (research only) | Written comparison; no execution code |
 | 7 | **Real Vault data import and verified spec** | **Yes: owner's exports + support reply** | Phase 2 real-data acceptance in doc 08 |
-| 8 | Paper-trading simulator (live-like loop on recorded data) | After 1–3 | Same decisions as backtester on identical input |
-| 9 | Broker integration research (MT5 terminal API vs. EA bridge; read-only account access first) | No (research only) | Written comparison; no execution code |
 
 ## Blockers
 - **Vault Markets data and specification** (backlog 7). Everything else proceeds without them. Provisional values are
