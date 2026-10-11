@@ -220,6 +220,20 @@ def cmd_random_baseline(settings, args) -> int:
     return 0
 
 
+def cmd_health(settings, args) -> int:
+    from .monitoring import check_health
+    from .risk.gate import KillSwitch
+
+    with Store(settings.database_path) as store:
+        rep = check_health(store, now_ms=system_clock_ms(), kill_switch=KillSwitch(settings.root / args.kill_switch),
+                           calendars={i.instrument_id: i.session_calendar for i in settings.instruments.values()},
+                           max_data_age_minutes=args.max_data_age_minutes)
+    for f in rep.findings:
+        print(f"{f.level.upper():<8} {f.check:<12} {f.detail}")
+    print(f"overall: {rep.level}")
+    return rep.exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -280,6 +294,10 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--stop-usd", type=float, required=True)
     rb.add_argument("--tp-usd", type=float)
 
+    hl = sub.add_parser("health", help="operational health check (exit 0 ok, 1 warn, 2 critical)")
+    hl.add_argument("--max-data-age-minutes", type=float, help="staleness threshold in trading minutes (real data only)")
+    hl.add_argument("--kill-switch", default="data/KILL_SWITCH")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -287,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
-            "backtest": cmd_backtest, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "backtest": cmd_backtest, "health": cmd_health, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:
