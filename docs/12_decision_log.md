@@ -16,3 +16,10 @@ Engineering decisions made under the CTO directive. Each entry records why the d
 | 10 | 2026-10-11 | NumPy added as a dependency | Feature and backtest computation over millions of M1 bars | Pure-Python fallback is possible but slow |
 | 11 | 2026-10-11 | Indicators: SMA-seeded EMA, Wilder smoothing, population σ; NaN restarts warm-up; expected closures don't break segments by default | Pins the conventions that differ between libraries; never bridges missing data | The gap policy is per-experiment configuration |
 | 12 | 2026-10-11 | Independent review by a separate agent before a milestone is considered complete | It caught 3 high-severity issues in D1 that the author's tests missed | — |
+| 13 | 2026-10-11 | Simulation rules written and independently challenged BEFORE implementation (docs/13 v1 → v2) | 15 review findings, including look-ahead in the draft's own gap-exit rule | Rules change only through a new reviewed version |
+| 14 | 2026-10-11 | Exits before closures come from the calendar only; unexpected gaps are held and flagged | Exiting before an unknowable gap is look-ahead | — |
+| 15 | 2026-10-11 | Market orders fill at the next existing bar within 5 min, never across a scheduled closure | MT5 omits quiet minutes; never filling across a closure avoids fictitious gap fills | `max_fill_wait_minutes` per experiment |
+| 16 | 2026-10-11 | Constant USD→ZAR rate in simulations, labelled; USD P&L reported alongside | No daily FX series yet | Daily FX series (backlog) |
+| 17 | 2026-10-11 | Ledger is append-only through SQLite triggers; test-set access limited per **hypothesis**, not per parameter set | Prevents silent editing and repeated test-set peeking | Override exists but is recorded |
+| 18 | 2026-10-11 | Safety scan matches HTTP verbs as quoted literals and adds urllib implicit-POST patterns | `\bDELETE\b` falsely matched SQL triggers; the new patterns also catch `Request(data=...)`, which the old ones missed | — |
+| 19 | 2026-10-11 | The leakage harness compares the strategy's raw decisions at the cut bar | Caught a blind spot (one-bar peek undetected) and avoided a false positive for positions open at the cut | — |

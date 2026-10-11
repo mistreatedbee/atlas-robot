@@ -23,6 +23,7 @@ Start with [docs/00_scope_xauusd.md](docs/00_scope_xauusd.md), then [docs/01_res
 | [10 Vault Markets data checklist](docs/10_vault_markets_data_checklist.md) | Step-by-step: what to get from support and MT5, file names, support message |
 | [11 Status and backlog](docs/11_status_and_backlog.md) | Current state with evidence, prioritised backlog, blockers |
 | [12 Decision log](docs/12_decision_log.md) | Engineering decisions, reasons, how to reverse |
+| [13 Simulation rules](docs/13_simulation_rules.md) | Backtest rules v2 (fills, exits, costs, gate mapping, splits, metrics, baselines, leakage test) |
 
 ## Setup
 
@@ -54,6 +55,14 @@ $A show --provider sample_synthetic --instrument XAUUSD --timeframe M5 --limit 5
 # Broker export (Phase 2): place it at data/imports/XAUUSD_M1.csv and set source_timezone in atlas.toml
 $A ingest --provider user_csv --instrument XAUUSD --timeframe M1 --start 2025-01-01
 $A runs                                          # ingestion run history, checkpoints, errors
+
+# Research (SYNTHETIC sample + PROVISIONAL costs = software validation only)
+$A backtest --experiment experiments/baseline_session_long_sample.toml --period validation [--cost-multiplier 2]
+$A random-baseline --experiment experiments/baseline_session_long_sample.toml --period validation --seeds 1000 --stop-usd 25
+$A experiments                                   # the append-only experiment ledger
+$A risk-feasibility --spec config/brokers/PROVISIONAL_dev_xauusd.toml --equity 500 --usd-to-account 16.6 \
+    --spread-usd 0.30 --slippage-usd 0.10 --source "provisional"
+$A health                                        # exit 0 ok / 1 warn / 2 critical
 ```
 
 Times on the command line are UTC. `--end` is exclusive and is capped at the last fully closed bar.

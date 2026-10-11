@@ -14,24 +14,28 @@
 | MT5 bar importer + server-time verification (both weekend sides) | Done, tested on **synthetic** MT5-format files only | `test_mt5_export.py`, `test_server_time.py` |
 | MT5 tick parser, tick→bar reconciliation, spread profile | Done (functions); tick storage not built | `test_mt5_export.py` |
 | Risk gate (fail-closed) + R500 feasibility CLI | Done; uses PROVISIONAL spec only | `test_risk_gate.py` |
-| Indicator core (SMA/EMA/Wilder/TR/ATR/RSI/BB/MACD) + segments | Done | `test_indicators.py` |
-| Backtester, cost model, strategy framework, experiment ledger | Not started | — |
-| Paper-trading simulator, monitoring, health checks | Not started | — |
+| Indicators (SMA/EMA/Wilder/TR/ATR/RSI/BB/MACD/Stochastic/ADX/confirmed swings) + segments | Done | `test_indicators.py` (reference + look-ahead tests) |
+| Simulation rules (docs/13 v2, independently challenged) | Done | review disposition table in docs/13 |
+| Cost model + event-driven M1/M5 backtester (every entry through the risk gate) | Done; **costs PROVISIONAL**; independent review in progress | `test_backtest_engine.py` (hand-computed examples) |
+| Experiment ledger (append-only), splits with embargo, test-set guard | Done | `test_ledger.py`, `test_runner.py` |
+| Baselines (no-trade, matched random, session-long) + R10 leakage harness | Done | `test_baselines_leakage.py` |
+| Health check (`atlas health`) | Done | `test_monitoring.py` |
+| Paper-trading simulator | Not started | — |
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
-Tests: **213 passed, 1 skipped (live, opt-in)**; the live test passes when enabled.
+Tests: **284 passed, 1 skipped (live, opt-in)**; the live test passes when enabled.
 Version control: local git only, no remote.
 
 ## Backlog (priority order)
 
 | # | Item | Blocked? | Acceptance |
 |---|---|---|---|
-| 1 | **Cost model + event-driven backtester** (M1/M5, bid bars + spread model, next-bar fills, conservative intrabar stop-first, broker constraints via spec, risk gate in the loop) | No | Hand-computed trade fixture reproduced exactly; costs ×1/×1.5/×2; every trade passes through `risk.gate.evaluate`; no look-ahead test |
-| 2 | **Experiment ledger** (hypotheses, data snapshots with content hash, configs, results; append-only) | No | Re-running an experiment gives an identical result hash; failed experiments retained |
-| 3 | Baseline strategies (random entry with matched exposure; "no trade") | No | Baselines reproducible with a fixed seed |
-| 4 | Remaining features: ADX, stochastic, swing structure (confirmed swings), session features | No | Same reference + look-ahead tests as D3 |
-| 5 | Tick storage (Parquet, decision D5) and spread profile report CLI | No (needs `pyarrow`) | Round-trip and reconciliation tests |
-| 6 | Monitoring: structured health report (data freshness, last run status, rejects) | No | CLI health check with non-zero exit on stale/failed |
+| 1 | Tick storage (Parquet, D5) + measured spread/slippage profile → replaces provisional cost values | Partly (needs Vault ticks for real values) | Round-trip + reconciliation tests; cost model built from data |
+| 2 | Event calendar (FOMC/CPI/NFP official schedules, point-in-time) → news no-trade windows + slippage widening | No | Release-time gating tests; no event visible before its release |
+| 3 | First pre-registered gold hypotheses (momentum, pullback, range, breakout) | Needs real data to be meaningful | Pre-registration records; train/validation only until reviewed |
+| 4 | Daily USD/ZAR series for account conversion | No | Point-in-time FX applied per trade |
+| 5 | Paper-trading simulator (live-like loop on recorded data) | No | Same decisions as the backtester on identical input |
+| 6 | Broker integration research (MT5 read-only access options) | No (research only) | Written comparison; no execution code |
 | 7 | **Real Vault data import and verified spec** | **Yes: owner's exports + support reply** | Phase 2 real-data acceptance in doc 08 |
 | 8 | Paper-trading simulator (live-like loop on recorded data) | After 1–3 | Same decisions as backtester on identical input |
 | 9 | Broker integration research (MT5 terminal API vs. EA bridge; read-only account access first) | No (research only) | Written comparison; no execution code |
