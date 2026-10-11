@@ -1,0 +1,13 @@
+# Risk limits for BACKTEST and PAPER modes (there is no live mode).
+# These are the project defaults chosen by engineering; the owner may LOWER them. Values above the hard
+# ceilings in atlas/risk/gate.py are rejected at load time.
+
+[limits]
+max_risk_per_trade_fraction = 0.01    # 1% of equity per trade, including spread/slippage/commission
+max_open_risk_fraction = 0.01         # all open XAUUSD positions together (one combined exposure)
+max_daily_loss_fraction = 0.03        # stop opening trades after a 3% loss from the day's starting equity
+max_drawdown_fraction = 0.10          # stop opening trades 10% below peak equity
+max_trades_per_day = 10
+max_price_age_ms = 2000               # price older than 2 s -> reject
+max_account_state_age_ms = 60000      # account snapshot older than 60 s -> reject
+max_margin_utilisation = 0.5          # use at most 50% of free margin

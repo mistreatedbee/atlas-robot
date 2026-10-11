@@ -136,6 +136,32 @@ def cmd_runs(settings, args) -> int:
     return 0
 
 
+def cmd_risk_feasibility(settings, args) -> int:
+    from .brokers.spec import SpecError, load_spec
+    from .risk.gate import CostInputs, RiskLimits, feasibility
+
+    spec = load_spec(settings.root / args.spec)
+    limits = RiskLimits.load(settings.root / args.limits)
+    costs = CostInputs(spread_usd=args.spread_usd, slippage_usd=args.slippage_usd,
+                       usd_to_account=args.usd_to_account, sources=tuple(args.source))
+    try:
+        rows = feasibility(spec, args.equity, [float(x) for x in args.stops.split(",")], costs, limits)
+    except SpecError as exc:
+        print(f"cannot assess: {exc}", file=sys.stderr)
+        return 2
+    print(f"spec: {spec.label}")
+    if spec.status.value != "verified":
+        print("*** NOT VERIFIED BROKER VALUES: results illustrate the method only. ***")
+    print(f"equity {args.equity:.2f} | spread {args.spread_usd} + slippage {args.slippage_usd} USD/oz | "
+          f"USD->account {args.usd_to_account} | per-trade limit {limits.max_risk_per_trade_fraction:.2%}")
+    print(f"sources: {'; '.join(costs.sources)}")
+    print(f"{'stop USD/oz':>11} {'risk @ min vol':>15} {'% equity':>9}  permitted")
+    for r in rows:
+        print(f"{r.stop_usd:>11.2f} {r.risk_at_min_volume:>15.2f} {r.risk_fraction_at_min_volume:>9.2%}  "
+              f"{'yes' if r.permitted else 'NO'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -169,13 +195,23 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--limit", type=int, default=10, help="last N candles (0 = all)")
     show.add_argument("--include-invalid", action="store_true")
 
+    rf = sub.add_parser("risk-feasibility", help="risk of the smallest possible trade at given stop distances")
+    rf.add_argument("--spec", required=True, help="broker spec TOML (e.g. config/brokers/PROVISIONAL_dev_xauusd.toml)")
+    rf.add_argument("--limits", default="config/risk.toml")
+    rf.add_argument("--equity", type=float, required=True, help="account equity in account currency")
+    rf.add_argument("--usd-to-account", type=float, required=True, help="USD -> account currency rate (no default)")
+    rf.add_argument("--spread-usd", type=float, required=True)
+    rf.add_argument("--slippage-usd", type=float, required=True)
+    rf.add_argument("--source", action="append", required=True, help="where each cost/FX input came from (repeatable)")
+    rf.add_argument("--stops", default="0.5,1,2,3,5", help="comma-separated stop distances in USD/oz")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
 
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
-            "show": cmd_show, "runs": cmd_runs}
+            "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility}
 
 
 def main(argv: list[str] | None = None) -> int:
