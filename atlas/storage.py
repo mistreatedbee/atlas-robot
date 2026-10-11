@@ -20,13 +20,13 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
     "volume", "volume_kind", "quote_volume", "trade_count",
     "bid_open", "bid_high", "bid_low", "bid_close",
-    "ask_open", "ask_high", "ask_low", "ask_close",
+    "ask_open", "ask_high", "ask_low", "ask_close", "spread_points",
 )
 
 DDL = f"""
@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     out_of_window            INTEGER NOT NULL DEFAULT 0,
     invalid                  INTEGER NOT NULL DEFAULT 0,
     error                    TEXT,
-    software_version         TEXT NOT NULL
+    software_version         TEXT NOT NULL,
+    source_detail            TEXT          -- JSON: files + SHA-256, server-time model and its verification, etc.
 );
 
 CREATE TABLE IF NOT EXISTS candles (
@@ -90,6 +91,7 @@ CREATE TABLE IF NOT EXISTS candles (
     trade_count       INTEGER,
     bid_open REAL, bid_high REAL, bid_low REAL, bid_close REAL,
     ask_open REAL, ask_high REAL, ask_low REAL, ask_close REAL,
+    spread_points     INTEGER,            -- as reported by the source; NOT used as a cost until verified
     source_symbol     TEXT NOT NULL,
     data_label        TEXT NOT NULL CHECK (data_label IN ({", ".join(repr(d.value) for d in DataLabel)})),
     validation_status TEXT NOT NULL CHECK (validation_status IN ({", ".join(repr(s.value) for s in ValidationStatus)})),
@@ -158,7 +160,7 @@ def _candle_row_values(c: Candle) -> tuple:
         c.close_time, c.open, c.high, c.low, c.close, c.price_basis.value,
         c.volume, c.volume_kind.value, c.quote_volume, c.trade_count,
         c.bid_open, c.bid_high, c.bid_low, c.bid_close,
-        c.ask_open, c.ask_high, c.ask_low, c.ask_close,
+        c.ask_open, c.ask_high, c.ask_low, c.ask_close, c.spread_points,
     )
 
 
@@ -183,14 +185,30 @@ class Store:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    # Forward-only migrations: version -> SQL statements that bring the previous version up to it.
+    MIGRATIONS = {
+        2: ("ALTER TABLE candles ADD COLUMN spread_points INTEGER",
+            "ALTER TABLE ingestion_runs ADD COLUMN source_detail TEXT"),
+    }
+
     def _migrate(self) -> None:
         with self.conn:
-            self.conn.executescript(DDL)
-            row = self.conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+            existing = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'").fetchone()
+            row = (self.conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+                   if existing else None)
             if row is None:
+                self.conn.executescript(DDL)
                 self.conn.execute("INSERT INTO schema_meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
-            elif int(row["value"]) != SCHEMA_VERSION:
-                raise RuntimeError(f"database schema v{row['value']} != code schema v{SCHEMA_VERSION}; migration required")
+                return
+            version = int(row["value"])
+            if version > SCHEMA_VERSION:
+                raise RuntimeError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION})")
+            for target in range(version + 1, SCHEMA_VERSION + 1):
+                for statement in self.MIGRATIONS[target]:
+                    self.conn.execute(statement)
+                self.conn.execute("UPDATE schema_meta SET value=? WHERE key='schema_version'", (str(target),))
+            self.conn.executescript(DDL)  # idempotent: creates any missing tables/views
 
     # ---- instruments -------------------------------------------------------------------------
 
@@ -222,6 +240,11 @@ class Store:
                  start_ms, end_ms, resumed_from, now_ms, None, __version__),
             )
         return run_id
+
+    def set_source_detail(self, run_id: str, detail: dict) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE ingestion_runs SET source_detail=? WHERE run_id=?",
+                              (json.dumps(detail, sort_keys=True, default=str), run_id))
 
     def find_resumable_run(self, *, instrument_id: str, provider: str, venue: str, timeframe: str,
                            start_ms: int, end_ms: int) -> sqlite3.Row | None:
@@ -365,6 +388,7 @@ class Store:
             quote_volume=r["quote_volume"], trade_count=r["trade_count"],
             bid_open=r["bid_open"], bid_high=r["bid_high"], bid_low=r["bid_low"], bid_close=r["bid_close"],
             ask_open=r["ask_open"], ask_high=r["ask_high"], ask_low=r["ask_low"], ask_close=r["ask_close"],
+            spread_points=r["spread_points"],
         )
 
     def data_labels(self, instrument_id: str, provider: str, timeframe: str) -> set[str]:

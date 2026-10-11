@@ -1,0 +1,35 @@
+# PROVISIONAL DEVELOPMENT VALUES — NOT VAULT MARKETS, NOT ANY REAL BROKER.
+# Generic retail XAUUSD CFD conventions, used ONLY so that sizing, costing and simulation code can be
+# developed and tested before the real Vault specification exists. Every output produced with this file
+# is labelled "provisional_dev". It can never be used where a verified spec is required.
+
+status = "provisional_dev"
+broker = "PROVISIONAL generic gold CFD"
+sources = ["Generic MT5 gold CFD conventions (assumption, no single source)"]
+notes = ["Replace with config/brokers/vault_markets_xauusd.toml once verified."]
+
+[symbol]
+name = "XAUUSD"
+contract_size = 100.0                 # oz per lot (assumption)
+digits = 2                            # assumption
+tick_size = 0.01                      # USD/oz (assumption)
+tick_value = 1.0                      # USD per tick per lot = tick_size x contract_size (assumption)
+tick_value_currency = "USD"
+volume_min = 0.01                     # lots (assumption)
+volume_max = 50.0
+volume_step = 0.01
+stops_level_points = 0                # assumption
+freeze_level_points = 0
+spread_typical_points = 30            # = US$0.30/oz (assumption; research must use measured bid/ask)
+commission_per_lot_round_turn = 0.0   # assumption
+commission_currency = "USD"
+
+[account]
+account_type = "provisional"
+currency = "ZAR"
+leverage = 500.0
+margin_call_level_pct = 100.0
+stop_out_level_pct = 50.0
+
+[server_time]
+model = "ny_close_midnight"

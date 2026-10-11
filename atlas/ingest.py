@@ -93,10 +93,15 @@ def ingest(
                                                                    "checkpoint_ms": cursor})
 
     status, error = "succeeded", None
+    detail_saved = False
     try:
         while cursor < end_ms:
             chunk_end = min(end_ms, cursor + provider.max_bars_per_request * tf)
             batch = provider.fetch(symbol, instrument.instrument_id, timeframe, cursor, chunk_end)
+            describe = getattr(provider, "describe", None)  # optional: provenance of file-based sources
+            if describe is not None and not detail_saved:
+                store.set_source_detail(run_id, describe(symbol, timeframe))
+                detail_saved = True
             now = clock()
             accepted, seen = [], set()
             extra = {"received": len(batch.candles), "unfinished_skipped": 0, "out_of_window": 0}
@@ -128,6 +133,12 @@ def ingest(
             cursor = chunk_end
     except BaseException as exc:  # includes KeyboardInterrupt: record the failure, then propagate if fatal
         status, error = "failed", f"{type(exc).__name__}: {exc}"
+        describe = getattr(provider, "describe", None)
+        if describe is not None and not detail_saved:
+            try:  # keep the evidence for a refused import (e.g. server-time mismatch)
+                store.set_source_detail(run_id, describe(symbol, timeframe))
+            except Exception:
+                pass
         store.finish_run(run_id, status=status, now_ms=clock(), error=error)
         log.error("ingestion failed; rerun the same command to resume from the checkpoint",
                   extra={**ctx, "error": error, "checkpoint_ms": cursor})

@@ -87,6 +87,7 @@ class Candle:
     ask_high: float | None = None
     ask_low: float | None = None
     ask_close: float | None = None
+    spread_points: int | None = None  # spread as reported by the source (MT5 bar export); meaning is source-specific
 
     def values_key(self) -> tuple:
         """The observable values, used to tell a true duplicate from a conflicting revision."""
@@ -94,7 +95,7 @@ class Candle:
             self.close_time, self.open, self.high, self.low, self.close, self.price_basis.value,
             self.volume, self.volume_kind.value, self.quote_volume, self.trade_count,
             self.bid_open, self.bid_high, self.bid_low, self.bid_close,
-            self.ask_open, self.ask_high, self.ask_low, self.ask_close,
+            self.ask_open, self.ask_high, self.ask_low, self.ask_close, self.spread_points,
         )
 
 

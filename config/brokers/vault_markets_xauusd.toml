@@ -1,0 +1,28 @@
+# Vault Markets — XAUUSD specification.  STATUS: UNVERIFIED.
+# Only facts stated on Vault's public website (2026-10-11) are recorded. Every contract/cost value is
+# deliberately ABSENT until copied from the MT5 Specification window or confirmed by Vault support
+# (docs/10_vault_markets_data_checklist.md). Absent values make every sizing/costing use fail closed.
+
+status = "unverified"
+broker = "Vault Markets"
+# server = ""                         # from MT5 login screen (checklist step 2)
+
+sources = [
+  "https://www.vaultmarkets.trade/ (2026-10-11): VaultMarkets (Pty) Ltd, juristic representative of RocketX (Pty) Ltd, FSP 52142 (as stated by Vault; not yet checked on the FSCA register)",
+  "https://www.vaultmarkets.trade/account-types/ (2026-10-11): 'Metals' listed for most account types; leverage up to 1:500 (1:1000 on VAULT 1000)",
+  "https://vaultmarkets.trade/trading-desk/faq/ (2026-10-11): markets generally close Fri 23:00 and open Sun 23:00 (GMT+2); not gold-specific",
+]
+
+notes = [
+  "Research account candidates: VAULT NO BONUS or VAULT MICRO on MT5 (bonus credit distorts margin; No Stop-Out has unpublished terms).",
+  "Whether an MT5 demo exists, and whether it matches live, is unconfirmed (support question S1/S2).",
+]
+
+[symbol]
+name = "XAUUSD"                       # UNCONFIRMED (support question S3)
+
+[account]
+# account_type, currency, leverage, margin_call_level_pct, stop_out_level_pct: unknown
+
+# [server_time]
+# model = ""                          # to be confirmed by support (S6) AND by the export's weekend closes

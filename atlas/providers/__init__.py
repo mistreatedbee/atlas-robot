@@ -11,8 +11,9 @@ from ..models import DataLabel, PriceBasis, VolumeKind
 from .base import CandleProvider
 from .binance_spot import DEFAULT_BASE_URL, BinanceSpotProvider
 from .csv_file import CsvFileProvider
+from .mt5_export import Mt5ExportProvider
 
-__all__ = ["CandleProvider", "BinanceSpotProvider", "CsvFileProvider", "build_provider"]
+__all__ = ["CandleProvider", "BinanceSpotProvider", "CsvFileProvider", "Mt5ExportProvider", "build_provider"]
 
 
 def build_provider(cfg: ProviderConfig, root: Path) -> CandleProvider:
@@ -36,6 +37,18 @@ def build_provider(cfg: ProviderConfig, root: Path) -> CandleProvider:
                 price_basis=PriceBasis(opts["price_basis"]),
                 volume_kind=VolumeKind(opts.get("volume_kind", "none")),
                 source_timezone=opts.get("source_timezone", "UTC"),
+            )
+        except KeyError as exc:
+            raise ConfigError(f"provider {cfg.name}: missing option {exc}") from None
+    if cfg.kind == "mt5_export":
+        try:
+            return Mt5ExportProvider(
+                name=cfg.name,
+                venue=opts["venue"],
+                directory=root / opts["directory"],
+                server_time_model=opts["server_time_model"],
+                data_label=DataLabel(opts.get("data_label", "user_file")),
+                price_basis=PriceBasis(opts.get("price_basis", "bid")),
             )
         except KeyError as exc:
             raise ConfigError(f"provider {cfg.name}: missing option {exc}") from None
