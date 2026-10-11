@@ -80,8 +80,8 @@ class BrokerSpec:
     path: Path | None = field(default=None, compare=False)
 
     # Fields required before a spec can size a position or cost a trade.
-    SIZING_FIELDS = ("contract_size", "digits", "tick_size", "volume_min", "volume_max", "volume_step",
-                     "stops_level_points", "commission_per_lot_round_turn")
+    SIZING_FIELDS = ("contract_size", "digits", "tick_size", "tick_value", "tick_value_currency",
+                     "volume_min", "volume_max", "volume_step", "stops_level_points", "commission_per_lot_round_turn")
 
     def missing(self, names: tuple[str, ...] = SIZING_FIELDS) -> list[str]:
         return [n for n in names if getattr(self.symbol, n) is None]
@@ -168,6 +168,8 @@ def load_spec(path: str | Path) -> BrokerSpec:
         if not spec.sources:
             raise SpecError(f"{path}: a verified spec must list its sources")
         missing = spec.missing() + [n for n in ("server",) if not spec.server]
+        missing += [f"account.{n}" for n in ("currency", "leverage", "stop_out_level_pct")
+                    if getattr(account, n) is None]
         if spec.server_time_model is None:
             missing.append("server_time.model")
         if missing:

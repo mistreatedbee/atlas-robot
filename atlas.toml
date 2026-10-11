@@ -39,12 +39,19 @@ source_timezone = "UTC"
 
 # Vault Markets MT5 exports (View -> Symbols -> Bars -> Export), placed in data/imports/vault_markets/
 # and named XAUUSD_M1_bars_<from>_<to>.csv (docs/10). Not yet received.
-# server_time_model is PROVISIONAL (a common MT5 convention, not confirmed by Vault). It is checked against
-# the weekend closes in every export and the import is REFUSED if the data contradicts it.
+# server_time_model is PROVISIONAL (a common MT5 convention, not confirmed by Vault). Every export is checked
+# against the Friday close AND Sunday reopen of each weekend; the import is REFUSED on any contradiction.
+# friday_close_ny / sunday_open_ny: broker's gold session boundaries (New York time); defaults are the CME
+# convention and are PROVISIONAL until read from the MT5 Specification "Trades" sessions.
+# server_time_evidence: set only when independent evidence exists (support reply, server-clock screenshot);
+# without it imports are labelled "consistent_unconfirmed", never "verified".
 [providers.vault_mt5]
 kind = "mt5_export"
 venue = "vault_markets"
 directory = "data/imports/vault_markets"
 server_time_model = "ny_close_midnight"
+friday_close_ny = "17:00"
+sunday_open_ny = "18:00"
+# server_time_evidence = ""
 data_label = "user_file"
 price_basis = "bid"

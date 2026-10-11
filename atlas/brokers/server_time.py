@@ -7,17 +7,26 @@ MT5 exports carry naive timestamps in the broker's *server time*. Supported mode
 * ``fixed:+HH:MM``      — constant offset from UTC.
 * an IANA zone name     — e.g. ``Europe/Athens`` (follows EU daylight-saving dates, which differ from the US).
 
-Inference: for gold the weekly close is Friday 17:00 New York (calendar ``xau_cfd``). The last bar before each
-weekend gap therefore reveals the server's UTC offset at that moment. A declared model is accepted only if it
-matches every usable weekend in the export.
+Verification: the export is split into trading weeks at gaps longer than 24 h. Each week boundary is checked
+from BOTH sides — the last bar before the gap against the broker's Friday close, and the first bar after it
+against the Sunday reopen (anchors in New York time, configurable because brokers differ; default 17:00 / 18:00).
+Each check is CONSISTENT (within tolerance of the declared model), CONTRADICTED (off by a whole 1-3 hours, the typical
+mark of a wrong offset/DST rule) or ANOMALOUS (anything else, e.g. a holiday early close; ignored).
+
+* Any contradiction -> the whole import is refused.
+* A week with no consistent check -> its bars cannot be placed in UTC and are rejected.
+* Data alone cannot rule out a broker whose sessions AND clock are both shifted, so passing these checks makes
+  the model "consistent"; it becomes "verified" only with independent evidence (support statement or a
+  server-clock-vs-UTC screenshot) recorded in configuration.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta, timezone
+from enum import StrEnum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..sessions import NEW_YORK
@@ -68,68 +77,135 @@ class ServerTimeModel:
 
 
 @dataclass(frozen=True)
-class WeekendObservation:
-    last_bar_server: datetime  # naive server time of the last bar's OPEN before the gap
-    server_close: datetime  # last bar open + timeframe
-    expected_close_utc: datetime  # Friday 17:00 New York, in UTC
-    inferred_offset: timedelta | None  # None when the weekend is unusable (e.g. holiday early close)
-    residual_minutes: float
+class SessionAnchors:
+    """Broker's weekly gold session boundaries in New York time (confirm from the MT5 'Trades' sessions)."""
+
+    friday_close_ny: time = time(17, 0)
+    sunday_open_ny: time = time(18, 0)
+
+
+class Verdict(StrEnum):
+    CONSISTENT = "consistent"
+    CONTRADICTED = "contradicted"
+    ANOMALOUS = "anomalous"
 
 
 @dataclass(frozen=True)
-class InferenceReport:
-    observations: tuple[WeekendObservation, ...]
+class BoundaryCheck:
+    side: str  # "friday_close" | "sunday_open"
+    observed_server: datetime  # close side: last bar open + timeframe; open side: first bar open
+    expected_utc: datetime
+    implied_offset: timedelta
+    declared_offset: timedelta
+    verdict: Verdict
 
     @property
-    def usable(self) -> list[WeekendObservation]:
-        return [o for o in self.observations if o.inferred_offset is not None]
+    def delta_minutes(self) -> float:
+        return (self.implied_offset - self.declared_offset).total_seconds() / 60
 
-    def offsets(self) -> set[timedelta]:
-        return {o.inferred_offset for o in self.usable}
+    def describe(self) -> str:
+        return (f"{self.side} near {self.expected_utc:%Y-%m-%d %H:%M} UTC: data implies UTC{_fmt(self.implied_offset)}, "
+                f"model gives UTC{_fmt(self.declared_offset)} -> {self.verdict.value}")
 
 
-def _friday_close_utc(friday_date) -> datetime:
-    local = datetime(friday_date.year, friday_date.month, friday_date.day, 17, 0, tzinfo=NEW_YORK)
+@dataclass(frozen=True)
+class WeekCheck:
+    first_bar_server: datetime
+    last_bar_server: datetime
+    checks: tuple[BoundaryCheck, ...]
+
+    @property
+    def verified(self) -> bool:
+        verdicts = {c.verdict for c in self.checks}
+        return Verdict.CONSISTENT in verdicts and Verdict.CONTRADICTED not in verdicts
+
+
+@dataclass(frozen=True)
+class VerificationReport:
+    model_spec: str
+    weeks: tuple[WeekCheck, ...]
+    anchors: SessionAnchors = field(default_factory=SessionAnchors)
+
+    @property
+    def checks(self) -> list[BoundaryCheck]:
+        return [c for w in self.weeks for c in w.checks]
+
+    @property
+    def contradictions(self) -> list[BoundaryCheck]:
+        return [c for c in self.checks if c.verdict is Verdict.CONTRADICTED]
+
+    @property
+    def status(self) -> str:
+        if self.contradictions:
+            return "contradicted"
+        if not any(w.verified for w in self.weeks):
+            return "no_evidence"
+        return "consistent"
+
+    def problems(self) -> list[str]:
+        if self.contradictions:
+            return [c.describe() for c in self.contradictions]
+        if self.status == "no_evidence":
+            return ["no week boundary in the export could be checked; include at least one full weekend "
+                    "(Friday close and Sunday reopen) to verify server time"]
+        return []
+
+    def week_of(self, server_open: datetime) -> WeekCheck | None:
+        for w in self.weeks:
+            if w.first_bar_server <= server_open <= w.last_bar_server:
+                return w
+        return None
+
+
+def _ny_to_utc(day, at: time) -> datetime:
+    local = datetime(day.year, day.month, day.day, at.hour, at.minute, tzinfo=NEW_YORK)
     return local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def infer_offsets(server_bar_opens: Sequence[datetime], timeframe_ms: int, *, tolerance_minutes: float = 20) -> InferenceReport:
-    """Infer the server UTC offset from each weekend gap in naive server-time bar opens (sorted or not)."""
+def _check(side: str, observed: datetime, weekday: int, at: time, model: ServerTimeModel,
+           tolerance: timedelta) -> BoundaryCheck | None:
+    days = [observed.date() + timedelta(days=d) for d in (-1, 0, 1)]
+    matches = [d for d in days if d.weekday() == weekday]
+    if not matches:
+        return None  # boundary is not on the expected weekday (e.g. holiday closure): no evidence either way
+    expected = _ny_to_utc(matches[0], at)
+    implied = observed - expected
+    declared = model.offset_at_utc(int(expected.replace(tzinfo=timezone.utc).timestamp() * 1000))
+    delta = implied - declared
+    if abs(delta) <= tolerance:
+        verdict = Verdict.CONSISTENT
+    elif any(abs(abs(delta) - timedelta(hours=h)) <= tolerance for h in (1, 2, 3)):
+        verdict = Verdict.CONTRADICTED  # whole-hour error: wrong offset or DST rule
+    else:
+        verdict = Verdict.ANOMALOUS  # early close, late open, holiday: not evidence about the clock
+    return BoundaryCheck(side, observed, expected, implied, declared, verdict)
+
+
+def verify_server_time(server_bar_opens: Sequence[datetime], timeframe_ms: int, model: ServerTimeModel, *,
+                       anchors: SessionAnchors = SessionAnchors(), tolerance_minutes: float = 10) -> VerificationReport:
     opens = sorted(server_bar_opens)
+    if not opens:
+        return VerificationReport(model.spec, (), anchors)
     tf = timedelta(milliseconds=timeframe_ms)
-    obs = []
-    for prev, cur in zip(opens, opens[1:]):
-        if (cur - prev).total_seconds() * 1000 <= WEEKEND_GAP_MS:
-            continue
-        server_close = prev + tf
-        # The true offset is within +-14h, so the server-calendar date of the close is within a day of Friday.
-        candidates = [server_close.date() + timedelta(days=d) for d in (-1, 0, 1)]
-        fridays = [d for d in candidates if d.weekday() == 4]
-        if not fridays:
-            obs.append(WeekendObservation(prev, server_close, datetime.min, None, float("nan")))
-            continue
-        expected = _friday_close_utc(fridays[0])
-        raw = server_close - expected
-        whole = timedelta(minutes=round(raw.total_seconds() / 60 / 30) * 30)  # offsets come in 30-min units
-        residual = abs((raw - whole).total_seconds()) / 60
-        usable = residual <= tolerance_minutes and timedelta(hours=-12) <= whole <= timedelta(hours=14)
-        obs.append(WeekendObservation(prev, server_close, expected, whole if usable else None, residual))
-    return InferenceReport(tuple(obs))
-
-
-def verify_model(model: ServerTimeModel, report: InferenceReport) -> list[str]:
-    """Return a list of contradictions between the declared model and the data (empty = consistent)."""
-    if not report.usable:
-        return ["no usable weekend close in the export; include at least one full Friday close to verify server time"]
-    problems = []
-    for o in report.usable:
-        declared = model.offset_at_utc(int(o.expected_close_utc.replace(tzinfo=timezone.utc).timestamp() * 1000))
-        if declared != o.inferred_offset:
-            problems.append(
-                f"week closing {o.expected_close_utc:%Y-%m-%d}: data implies UTC{_fmt(o.inferred_offset)}, "
-                f"model {model.spec} gives UTC{_fmt(declared)}"
-            )
-    return problems
+    tol = timedelta(minutes=tolerance_minutes)
+    # split into trading weeks at long gaps
+    bounds = [0] + [i for i in range(1, len(opens)) if (opens[i] - opens[i - 1]) > timedelta(milliseconds=WEEKEND_GAP_MS)]
+    bounds.append(len(opens))
+    weeks = []
+    n_weeks = len(bounds) - 1
+    for w in range(n_weeks):
+        first, last = opens[bounds[w]], opens[bounds[w + 1] - 1]
+        checks = []
+        if w > 0:  # the gap before this week: Sunday reopen
+            c = _check("sunday_open", first, 6, anchors.sunday_open_ny, model, tol)
+            if c is not None:
+                checks.append(c)
+        if w < n_weeks - 1:  # the gap after this week: Friday close
+            c = _check("friday_close", last + tf, 4, anchors.friday_close_ny, model, tol)
+            if c is not None:
+                checks.append(c)
+        weeks.append(WeekCheck(first, last, tuple(checks)))
+    return VerificationReport(model.spec, tuple(weeks), anchors)
 
 
 def _fmt(td: timedelta) -> str:

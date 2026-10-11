@@ -63,6 +63,10 @@ class CsvFileProvider:
         self._cache: dict[tuple[str, str], FetchResult] = {}
         self._rejects_reported: set[tuple[str, str]] = set()
 
+    def reset_run_state(self) -> None:
+        """Called by ingest at the start of every run, so each run records its own rejects."""
+        self._rejects_reported.clear()
+
     def path_for(self, symbol: str, timeframe: str) -> Path:
         return Path(self.path_template.format(symbol=symbol, timeframe=timeframe))
 

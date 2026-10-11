@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from ..brokers.server_time import SessionAnchors
 from ..config import ConfigError, ProviderConfig
 from ..http import ReadOnlyHttpClient
 from ..models import DataLabel, PriceBasis, VolumeKind
@@ -49,6 +51,11 @@ def build_provider(cfg: ProviderConfig, root: Path) -> CandleProvider:
                 server_time_model=opts["server_time_model"],
                 data_label=DataLabel(opts.get("data_label", "user_file")),
                 price_basis=PriceBasis(opts.get("price_basis", "bid")),
+                anchors=SessionAnchors(
+                    friday_close_ny=time.fromisoformat(opts.get("friday_close_ny", "17:00")),
+                    sunday_open_ny=time.fromisoformat(opts.get("sunday_open_ny", "18:00")),
+                ),
+                server_time_evidence=opts.get("server_time_evidence"),
             )
         except KeyError as exc:
             raise ConfigError(f"provider {cfg.name}: missing option {exc}") from None

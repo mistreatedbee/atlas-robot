@@ -72,6 +72,7 @@ SOURCE = [p for p in (ROOT / "atlas").rglob("*.py")]
 FORBIDDEN = [
     r"/api/v3/order", r"/fapi/v\d/order", r"newOrder", r"X-MBX-APIKEY", r"hmac", r"signature",
     r"api_secret", r"secret_key", r"\bPOST\b", r"\bDELETE\b", r"\bPUT\b", r"place_order", r"submit_order",
+    r"order_send", r"order_check", r"MetaTrader5", r"\bmt5\.initialize", r"TRADE_ACTION_",
 ]
 
 

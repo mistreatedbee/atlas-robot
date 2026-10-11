@@ -185,29 +185,40 @@ class Store:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    # Forward-only migrations: version -> SQL statements that bring the previous version up to it.
+    # Forward-only migrations: version -> columns to add as (table, column, type). Each step checks the live
+    # schema first, so a migration interrupted part-way can simply be re-run (idempotent).
     MIGRATIONS = {
-        2: ("ALTER TABLE candles ADD COLUMN spread_points INTEGER",
-            "ALTER TABLE ingestion_runs ADD COLUMN source_detail TEXT"),
+        2: (("candles", "spread_points", "INTEGER"), ("ingestion_runs", "source_detail", "TEXT")),
     }
 
+    def _columns(self, table: str) -> set[str]:
+        return {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+
     def _migrate(self) -> None:
-        with self.conn:
-            existing = self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'").fetchone()
-            row = (self.conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
-                   if existing else None)
-            if row is None:
+        existing = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'").fetchone()
+        row = (self.conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+               if existing else None)
+        if row is None:
+            with self.conn:
                 self.conn.executescript(DDL)
                 self.conn.execute("INSERT INTO schema_meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
-                return
-            version = int(row["value"])
-            if version > SCHEMA_VERSION:
-                raise RuntimeError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION})")
-            for target in range(version + 1, SCHEMA_VERSION + 1):
-                for statement in self.MIGRATIONS[target]:
-                    self.conn.execute(statement)
+            return
+        version = int(row["value"])
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(f"database schema v{version} is newer than this code (v{SCHEMA_VERSION})")
+        for target in range(version + 1, SCHEMA_VERSION + 1):
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for table, column, coltype in self.MIGRATIONS[target]:
+                    if column not in self._columns(table):
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
                 self.conn.execute("UPDATE schema_meta SET value=? WHERE key='schema_version'", (str(target),))
+                self.conn.execute("COMMIT")
+            except BaseException:
+                self.conn.execute("ROLLBACK")
+                raise
+        with self.conn:
             self.conn.executescript(DDL)  # idempotent: creates any missing tables/views
 
     # ---- instruments -------------------------------------------------------------------------

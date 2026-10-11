@@ -14,6 +14,9 @@ Bars from CFD symbols are normally built from BID prices; this is declared in co
 `<TICKVOL>` is broker tick count (a proxy). `<VOL>` (real volume) is ignored: OTC gold has none.
 `<SPREAD>` is stored as reported in `spread_points` and is NOT used as a trading cost until its meaning
 (e.g. minimum vs average spread over the bar) has been verified against tick data.
+
+Only intraday timeframes up to H1 are accepted: MT5 builds H4/D1 bars on SERVER-time boundaries, which do not
+align with UTC bar boundaries (server-anchored bars are not supported yet).
 """
 
 from __future__ import annotations
@@ -24,21 +27,24 @@ import io
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
-from ..brokers.server_time import InferenceReport, ServerTimeError, ServerTimeModel, infer_offsets, verify_model
+from ..brokers.server_time import SessionAnchors, ServerTimeError, ServerTimeModel, verify_server_time
 from ..models import Candle, DataLabel, FetchResult, PriceBasis, RejectedRecord, VolumeKind, timeframe_ms
 
 BAR_REQUIRED = {"<DATE>", "<OPEN>", "<HIGH>", "<LOW>", "<CLOSE>"}
 TICK_REQUIRED = {"<DATE>", "<TIME>", "<BID>", "<ASK>"}
 
 
-def read_text(path: Path) -> str:
-    raw = path.read_bytes()
+def _decode(raw: bytes) -> str:
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return raw.decode("utf-16")
     return raw.decode("utf-8-sig")
+
+
+def read_text(path: Path) -> str:
+    return _decode(path.read_bytes())
 
 
 def _rows(text: str) -> tuple[list[str], Iterable[list[str]]]:
@@ -97,11 +103,12 @@ class Mt5ExportProvider:
     """CandleProvider over one or more MT5 bar-export files for a symbol/timeframe."""
 
     max_bars_per_request = 50_000
-    timeframes = frozenset({"M1", "M5", "M15", "M30", "H1", "H4", "D1"})
+    timeframes = frozenset({"M1", "M5", "M15", "M30", "H1"})
 
     def __init__(self, *, name: str, venue: str, directory: str | Path, server_time_model: str,
                  data_label: DataLabel = DataLabel.USER_FILE, price_basis: PriceBasis = PriceBasis.BID,
-                 file_pattern: str = "{symbol}_{timeframe}_bars_*.csv"):
+                 file_pattern: str = "{symbol}_{timeframe}_bars_*.csv",
+                 anchors: SessionAnchors = SessionAnchors(), server_time_evidence: str | None = None):
         if data_label is DataLabel.LIVE_SOURCE:
             raise ValueError("an exported file is never a live source")
         self.name = name
@@ -111,9 +118,15 @@ class Mt5ExportProvider:
         self.data_label = data_label
         self.price_basis = price_basis
         self.file_pattern = file_pattern
-        self._cache: dict[tuple[str, str], FetchResult] = {}
+        self.anchors = anchors
+        self.server_time_evidence = server_time_evidence or None
+        self._cache: dict[tuple, FetchResult] = {}
         self._details: dict[tuple[str, str], dict] = {}
         self._rejects_reported: set[tuple[str, str]] = set()
+
+    def reset_run_state(self) -> None:
+        """Called by ingest at the start of every run, so each run records its own rejects."""
+        self._rejects_reported.clear()
 
     def files_for(self, symbol: str, timeframe: str) -> list[Path]:
         files = sorted(self.directory.glob(self.file_pattern.format(symbol=symbol, timeframe=timeframe)))
@@ -124,40 +137,55 @@ class Mt5ExportProvider:
         return files
 
     def _load(self, symbol: str, instrument_id: str, timeframe: str) -> FetchResult:
-        key = (symbol, timeframe)
+        files = self.files_for(symbol, timeframe)
+        # Cache key includes each file's size and mtime, so new or changed exports are picked up.
+        key = (symbol, instrument_id, timeframe, tuple((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in files))
         if key in self._cache:
             return self._cache[key]
         tf = timeframe_ms(timeframe)
-        files = self.files_for(symbol, timeframe)
         all_bars: list[ServerBar] = []
         result = FetchResult()
         file_info = []
         for f in files:
-            bars, rejects = parse_bars(read_text(f), f.name)
+            data = f.read_bytes()  # hash exactly the bytes that are parsed
+            bars, rejects = parse_bars(_decode(data), f.name)
             all_bars.extend(bars)
             result.rejects.extend(rejects)
-            file_info.append({"file": f.name, "sha256": hashlib.sha256(f.read_bytes()).hexdigest(),
+            file_info.append({"file": f.name, "sha256": hashlib.sha256(data).hexdigest(),
                               "rows": len(bars), "rejected": len(rejects)})
 
-        report: InferenceReport = infer_offsets([b.server_open for b in all_bars], tf)
-        problems = verify_model(self.model, report)
-        detail = {
+        report = verify_server_time([b.server_open for b in all_bars], tf, self.model, anchors=self.anchors)
+        problems = report.problems()
+        status = report.status
+        if status == "consistent":
+            status = "verified" if self.server_time_evidence else "consistent_unconfirmed"
+        self._details[(symbol, timeframe)] = {
             "files": file_info,
             "server_time_model": self.model.spec,
-            "weekend_observations": [
-                {"server_close": o.server_close.isoformat(), "expected_close_utc": o.expected_close_utc.isoformat(),
-                 "inferred_offset_h": None if o.inferred_offset is None else o.inferred_offset.total_seconds() / 3600,
-                 "residual_min": o.residual_minutes} for o in report.observations],
-            "server_time_verified": not problems,
+            "server_time_status": status,
+            "server_time_evidence": self.server_time_evidence,
+            "session_anchors_ny": {"friday_close": self.anchors.friday_close_ny.isoformat(),
+                                   "sunday_open": self.anchors.sunday_open_ny.isoformat()},
+            "boundary_checks": [
+                {"side": c.side, "observed_server": c.observed_server.isoformat(),
+                 "expected_utc": c.expected_utc.isoformat(),
+                 "implied_offset_h": c.implied_offset.total_seconds() / 3600,
+                 "declared_offset_h": c.declared_offset.total_seconds() / 3600, "verdict": c.verdict.value}
+                for c in report.checks],
+            "unverified_weeks": [w.first_bar_server.isoformat() for w in report.weeks if not w.verified],
             "price_basis": self.price_basis.value,
             "data_label": self.data_label.value,
         }
-        self._details[key] = detail
         if problems:
             raise ServerTimeError("server-time model rejected by the data; nothing imported: " + "; ".join(problems))
 
         by_time: dict[int, Candle] = {}
         for b in all_bars:
+            week = report.week_of(b.server_open)
+            if week is None or not week.verified:
+                result.rejects.append(RejectedRecord(
+                    "server time unverifiable for this trading week (no consistent weekend boundary check)", b.raw))
+                continue
             try:
                 open_ms = self.model.to_utc_ms(b.server_open)
             except ServerTimeError as exc:
@@ -185,10 +213,9 @@ class Mt5ExportProvider:
         return result
 
     def describe(self, symbol: str, timeframe: str) -> dict:
-        """Provenance for the ingestion run: files, hashes, server-time verification (kept even on refusal)."""
-        if (symbol, timeframe) not in self._details:
-            self._load(symbol, symbol, timeframe)
-        return self._details[(symbol, timeframe)]
+        """Provenance for the ingestion run: files, hashes, server-time checks (kept even on refusal).
+        Never loads data itself, so it cannot populate the cache with the wrong instrument id."""
+        return self._details.get((symbol, timeframe), {"note": "source not loaded (failed before parsing)"})
 
     def fetch(self, symbol: str, instrument_id: str, timeframe: str, start_ms: int, end_ms: int) -> FetchResult:
         loaded = self._load(symbol, instrument_id, timeframe)
@@ -225,17 +252,22 @@ def parse_ticks(text: str, source: str, model: ServerTimeModel) -> tuple[list[Ti
         try:
             ts = model.to_utc_ms(parse_server_time(row[idx["<DATE>"]], row[idx["<TIME>"]]))
             b, a = row[idx["<BID>"]].strip(), row[idx["<ASK>"]].strip()
-            bid = float(b) if b else bid
-            ask = float(a) if a else ask
+            new_bid = float(b) if b else bid
+            new_ask = float(a) if a else ask
         except (ValueError, IndexError, ServerTimeError) as exc:
-            rejects.append(RejectedRecord(f"unparseable MT5 tick row: {exc}", raw))
+            # The row's quote change is unknown, so the carried quote state can no longer be trusted.
+            bid = ask = None
+            rejects.append(RejectedRecord(f"unparseable MT5 tick row: {exc}; quote state reset", raw))
             continue
-        if bid is None or ask is None:
+        if new_bid is None or new_ask is None:
+            bid, ask = new_bid, new_ask
             rejects.append(RejectedRecord("tick before both bid and ask are known", raw))
             continue
-        if not (math.isfinite(bid) and math.isfinite(ask)) or bid <= 0 or ask < bid:
-            rejects.append(RejectedRecord(f"invalid quote bid={bid} ask={ask}", raw))
+        if not (math.isfinite(new_bid) and math.isfinite(new_ask)) or new_bid <= 0 or new_ask < new_bid:
+            bid = ask = None  # never carry an invalid side forward
+            rejects.append(RejectedRecord(f"invalid quote bid={new_bid} ask={new_ask}; quote state reset", raw))
             continue
+        bid, ask = new_bid, new_ask
         ticks.append(Tick(ts, bid, ask))
     return ticks, rejects
 
@@ -266,9 +298,11 @@ def aggregate_bid_bars(ticks: Iterable[Tick], tf_ms: int) -> dict[int, tuple[flo
 def reconcile_ticks_with_bars(ticks: list[Tick], candles: list[Candle], tolerance: float) -> list[BarMismatch]:
     """Check that bars exported by MT5 equal bid bars rebuilt from its ticks, for bars covered by both."""
     if not candles:
-        return []
+        raise ValueError("no bars to reconcile against")
     tf = candles[0].close_time - candles[0].open_time
     rebuilt = aggregate_bid_bars(ticks, tf)
+    if not any(c.open_time in rebuilt for c in candles):
+        raise ValueError("ticks and bars do not overlap; nothing was reconciled")
     out = []
     for c in candles:
         r = rebuilt.get(c.open_time)

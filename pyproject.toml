@@ -7,7 +7,7 @@ name = "atlas-research"
 version = "0.1.0"
 description = "Project Atlas Phase 1: market-data ingestion, validation and storage for research. No trading."
 requires-python = ">=3.11"
-dependencies = ["certifi>=2024.2.2"]   # CA bundle for verified HTTPS; everything else is the standard library
+dependencies = ["certifi>=2024.2.2", "numpy>=2.1"]   # certifi: CA bundle for verified HTTPS; numpy: feature computation
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

@@ -23,6 +23,10 @@ volume_max = 50.0
 volume_step = 0.01
 stops_level_points = 0
 commission_per_lot_round_turn = 0.0
+[account]
+currency = "ZAR"
+leverage = 500.0
+stop_out_level_pct = 50.0
 [server_time]
 model = "ny_close_midnight"
 """
@@ -76,7 +80,8 @@ def test_inconsistent_specs_are_rejected(tmp_path, old, new, message):
 
 
 @pytest.mark.parametrize("remove", ["contract_size = 100.0", 'server = "Test-Demo"', 'model = "ny_close_midnight"',
-                                    'sources = ["unit test"]'])
+                                    'sources = ["unit test"]', 'tick_value = 1.0', 'currency = "ZAR"',
+                                    "leverage = 500.0", "stop_out_level_pct = 50.0"])
 def test_verified_spec_must_be_complete(tmp_path, remove):
     text = VALID.format(status="verified").replace(remove, "")
     with pytest.raises(SpecError):

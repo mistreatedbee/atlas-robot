@@ -85,6 +85,9 @@ def ingest(
 
     run_id = store.start_run(**series_key, source_symbol=symbol, data_label=provider.data_label,
                              start_ms=start_ms, end_ms=end_ms, now_ms=clock(), resumed_from=resumed_from)
+    reset = getattr(provider, "reset_run_state", None)
+    if reset is not None:
+        reset()
     ctx = {"run_id": run_id, **series_key, "symbol": symbol, "data_label": provider.data_label.value}
     log.info("ingestion started", extra={**ctx, "start_ms": start_ms, "end_ms": end_ms,
                                          "cursor_ms": cursor, "resumed_from": resumed_from})
