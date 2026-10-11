@@ -20,7 +20,7 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
@@ -144,6 +144,62 @@ SELECT instrument_id, provider, venue, timeframe,
        open, high, low, close, price_basis, volume, volume_kind,
        data_label, validation_status, validation_issues, ingestion_run_id
 FROM candles;
+
+-- ---- Experiment ledger (append-only; enforced by triggers) ----------------------------------------
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id        TEXT PRIMARY KEY,
+    created_at_utc       INTEGER NOT NULL,
+    finished_at_utc      INTEGER,
+    name                 TEXT NOT NULL,
+    strategy             TEXT NOT NULL,
+    hypothesis_id        TEXT NOT NULL,     -- test-set access is limited per hypothesis, whatever the parameters
+    period               TEXT NOT NULL CHECK (period IN ('train','validation','test','full')),
+    status               TEXT NOT NULL CHECK (status IN ('running','completed','failed')),
+    config_json          TEXT NOT NULL,     -- strategy params, engine rules, costs, risk limits, spec, data selection
+    config_sha256        TEXT NOT NULL,
+    data_selection_json  TEXT NOT NULL,
+    data_sha256          TEXT,              -- hash of the exact candle rows used
+    data_label           TEXT,
+    cost_status          TEXT NOT NULL,     -- e.g. provisional_dev | verified
+    spec_label           TEXT NOT NULL,
+    code_version         TEXT NOT NULL,
+    test_access_override INTEGER NOT NULL DEFAULT 0,
+    metrics_json         TEXT,
+    result_sha256        TEXT,
+    error                TEXT
+);
+CREATE INDEX IF NOT EXISTS experiments_hypothesis ON experiments(hypothesis_id, period);
+
+CREATE TABLE IF NOT EXISTS experiment_trades (
+    experiment_id  TEXT NOT NULL REFERENCES experiments(experiment_id),
+    seq            INTEGER NOT NULL,
+    trade_json     TEXT NOT NULL,
+    PRIMARY KEY (experiment_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS experiment_events (
+    experiment_id  TEXT NOT NULL REFERENCES experiments(experiment_id),
+    seq            INTEGER NOT NULL,
+    bar_time_utc   INTEGER,
+    kind           TEXT NOT NULL,       -- e.g. risk_rejected, expired_gap, ignored_in_position
+    detail         TEXT,
+    PRIMARY KEY (experiment_id, seq)
+);
+
+CREATE TRIGGER IF NOT EXISTS experiments_no_delete BEFORE DELETE ON experiments
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS experiments_finalised_immutable BEFORE UPDATE ON experiments
+WHEN OLD.status != 'running'
+BEGIN SELECT RAISE(ABORT, 'finished experiments are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS experiments_config_immutable BEFORE UPDATE OF config_json, config_sha256, name,
+    strategy, hypothesis_id, period, data_selection_json, created_at_utc, code_version ON experiments
+BEGIN SELECT RAISE(ABORT, 'experiment configuration is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_trades_no_delete BEFORE DELETE ON experiment_trades
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_trades_no_update BEFORE UPDATE ON experiment_trades
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_events_no_delete BEFORE DELETE ON experiment_events
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
 """
 
 
@@ -189,6 +245,7 @@ class Store:
     # schema first, so a migration interrupted part-way can simply be re-run (idempotent).
     MIGRATIONS = {
         2: (("candles", "spread_points", "INTEGER"), ("ingestion_runs", "source_detail", "TEXT")),
+        3: (),  # v3 only adds the experiment-ledger tables, created by the idempotent DDL below
     }
 
     def _columns(self, table: str) -> set[str]:

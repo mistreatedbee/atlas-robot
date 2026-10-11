@@ -1,0 +1,38 @@
+# SOFTWARE VALIDATION ONLY: synthetic sample data + PROVISIONAL costs/spec. Not evidence about real gold.
+name = "Baseline no_trade on SYNTHETIC sample"
+hypothesis_id = "BASELINE-no_trade"
+spec = "config/brokers/PROVISIONAL_dev_xauusd.toml"
+risk_limits = "config/risk.toml"
+
+[data]
+instrument = "XAUUSD"
+provider = "sample_synthetic"
+venue = "synthetic"
+timeframe = "M5"
+
+[periods]                      # [start, end) in UTC; chronological, embargoed
+train = ["2026-08-03", "2026-08-12"]
+validation = ["2026-08-13", "2026-08-20"]
+test = ["2026-08-21", "2026-08-29"]
+embargo_days = 1
+
+[strategy]
+name = "no_trade"
+params = {}
+
+[engine]
+initial_equity = 100000.0      # ZAR. A R500 run is in experiments/r500_session_long_sample.toml
+latency_bars = 0
+max_fill_wait_minutes = 5
+pre_close_buffer_minutes = 5
+max_hold_bars = 0              # 0 = none
+longest_lookback_bars = 0
+
+[costs]                        # PROVISIONAL (docs/13 R1.3); replace with values measured from Vault ticks
+base_spread_usd = 0.30
+reopen_spread_usd = 0.80
+reopen_minutes = 15
+slippage_usd = 0.10
+usd_to_account = 16.6
+status = "provisional_dev"
+sources = ["spread/slippage: provisional assumption", "USDZAR ~16.6 implied from VALR/Coinbase 2026-10-11 (approx., constant)"]

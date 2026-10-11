@@ -162,6 +162,64 @@ def cmd_risk_feasibility(settings, args) -> int:
     return 0
 
 
+def _print_metrics(m: dict) -> None:
+    keys = ["trades", "net_pnl", "net_pnl_usd", "return_pct", "win_rate", "avg_win", "avg_loss", "profit_factor",
+            "expectancy", "expectancy_r", "worst_r", "costs_per_trade_r", "max_drawdown", "max_drawdown_pct",
+            "max_drawdown_duration_days", "exposure", "sharpe", "sharpe_ci95", "sortino", "trading_days"]
+    for k in keys:
+        v = m.get(k)
+        if isinstance(v, float):
+            v = f"{v:.4%}" if k in ("return_pct", "win_rate", "max_drawdown_pct", "exposure") else f"{v:,.4f}"
+        print(f"  {k:<28}: {v}")
+    if m.get("sharpe_note"):
+        print(f"  {'sharpe_note':<28}: {m['sharpe_note']}")
+    print(f"  {'exit_reasons':<28}: {m.get('exit_reasons')}")
+    print(f"  {'events':<28}: {m.get('events')}")
+
+
+def cmd_backtest(settings, args) -> int:
+    from .backtest.runner import ExperimentError, load_experiment, run_experiment
+    from .research.ledger import LedgerError
+
+    exp = load_experiment(settings.root / args.experiment, settings.root)
+    with Store(settings.database_path) as store:
+        try:
+            exp_id, m = run_experiment(store, exp, args.period, cost_multiplier=args.cost_multiplier,
+                                       confirm_test=args.confirm_test, allow_repeat_test=args.allow_repeat_test)
+        except (ExperimentError, LedgerError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    m.pop("_result", None)
+    if "synthetic_sample" in m.get("data_labels", []):
+        print(SAMPLE_BANNER, file=sys.stderr)
+    print(f"experiment {exp_id}: {exp.name} [{args.period}] cost x{args.cost_multiplier} ({m['cost_status']})")
+    _print_metrics(m)
+    return 0
+
+
+def cmd_experiments(settings, args) -> int:
+    from .research.ledger import Ledger
+
+    with Store(settings.database_path) as store:
+        for r in Ledger(store).list(args.limit):
+            m = json.loads(r["metrics_json"]) if r["metrics_json"] else {}
+            print(f"{r['experiment_id'][:8]} {r['status']:<9} {r['period']:<10} {r['strategy']:<13} "
+                  f"trades={m.get('trades', '-')} net={m.get('net_pnl', '-')} cost={r['cost_status']} "
+                  f"data={r['data_label']} code={r['code_version']}" + (f" error={r['error']}" if r["error"] else ""))
+    return 0
+
+
+def cmd_random_baseline(settings, args) -> int:
+    from .backtest.runner import load_experiment, matched_random_percentile
+
+    exp = load_experiment(settings.root / args.experiment, settings.root)
+    with Store(settings.database_path) as store:
+        out = matched_random_percentile(store, exp, args.period, seeds=args.seeds, stop_usd=args.stop_usd,
+                                        tp_usd=args.tp_usd)
+    print(json.dumps(out, indent=2, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -205,13 +263,31 @@ def build_parser() -> argparse.ArgumentParser:
     rf.add_argument("--source", action="append", required=True, help="where each cost/FX input came from (repeatable)")
     rf.add_argument("--stops", default="0.5,1,2,3,5", help="comma-separated stop distances in USD/oz")
 
+    bt = sub.add_parser("backtest", help="run an experiment config on stored data and record it in the ledger")
+    bt.add_argument("--experiment", required=True, help="experiment TOML (see experiments/)")
+    bt.add_argument("--period", required=True, choices=["train", "validation", "test"])
+    bt.add_argument("--cost-multiplier", type=float, default=1.0, help="stress: scale spread and slippage (>= 1)")
+    bt.add_argument("--confirm-test", action="store_true", help="required for the single test-period look")
+    bt.add_argument("--allow-repeat-test", action="store_true", help="override (recorded) for a repeated test look")
+
+    ex = sub.add_parser("experiments", help="list the experiment ledger")
+    ex.add_argument("--limit", type=int, default=20)
+
+    rb = sub.add_parser("random-baseline", help="rank a strategy against matched random entries (R9.2)")
+    rb.add_argument("--experiment", required=True)
+    rb.add_argument("--period", required=True, choices=["train", "validation"])
+    rb.add_argument("--seeds", type=int, default=1000)
+    rb.add_argument("--stop-usd", type=float, required=True)
+    rb.add_argument("--tp-usd", type=float)
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
 
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
-            "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility}
+            "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
+            "backtest": cmd_backtest, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:

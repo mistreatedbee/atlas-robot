@@ -93,6 +93,25 @@ class XauCfd(FxWeekly):
         return None
 
 
+    def in_reopen_window(self, ts_ms: int, minutes: int) -> bool:
+        """True during the first `minutes` after the 18:00 New York reopen (Sunday weekly open, Mon-Thu daily)."""
+        local = datetime.fromtimestamp(ts_ms / 1000, timezone.utc).astimezone(NEW_YORK)
+        if local.weekday() not in (6, 0, 1, 2, 3):
+            return False
+        since = (local.hour - 18) * 60 + local.minute + local.second / 60
+        return 0 <= since < minutes
+
+
+def is_open_at(calendar: SessionCalendar, ts_ms: int) -> bool:
+    return calendar.bar_in_session(ts_ms, ts_ms + 1)
+
+
+def trading_day(ts_ms: int) -> str:
+    """Gold trading-day label: New York date of (time + 7 h), so days roll at 17:00 New York (DST-aware)."""
+    local = datetime.fromtimestamp(ts_ms / 1000, timezone.utc).astimezone(NEW_YORK).replace(tzinfo=None)
+    return (local + timedelta(hours=7)).date().isoformat()
+
+
 CALENDARS: dict[str, SessionCalendar] = {c.name: c for c in (AlwaysOpen(), FxWeekly(), XauCfd())}
 
 

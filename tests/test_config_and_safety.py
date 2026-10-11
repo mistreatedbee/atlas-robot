@@ -71,7 +71,10 @@ def test_invalid_registry_is_rejected(raw, message):
 SOURCE = [p for p in (ROOT / "atlas").rglob("*.py")]
 FORBIDDEN = [
     r"/api/v3/order", r"/fapi/v\d/order", r"newOrder", r"X-MBX-APIKEY", r"hmac", r"signature",
-    r"api_secret", r"secret_key", r"\bPOST\b", r"\bDELETE\b", r"\bPUT\b", r"place_order", r"submit_order",
+    r"api_secret", r"secret_key", r"place_order", r"submit_order",
+    # HTTP write verbs can only be sent as string literals; urllib sends POST implicitly when data= is passed.
+    r"[\"']POST[\"']", r"[\"']DELETE[\"']", r"[\"']PUT[\"']", r"[\"']PATCH[\"']",
+    r"Request\([^)]*data\s*=", r"urlopen\([^)]*data\s*=",
     r"order_send", r"order_check", r"MetaTrader5", r"\bmt5\.initialize", r"TRADE_ACTION_",
 ]
 
