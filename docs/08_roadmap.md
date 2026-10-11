@@ -5,7 +5,7 @@ No phase starts until the previous phase's criteria are met **and you have revie
 | Phase | Goal | Status |
 |---|---|---|
 | 1 | Architecture and research documentation for XAU/USD only; data foundation | **Complete pending your review** (criteria below) |
-| 2 | Gold historical data pipeline on the broker's real data | Next. Blocked on D1 (broker) |
+| 2 | Gold historical data pipeline on the broker's real data | Importer, server-time verification and spec format built and tested on synthetic files; real Vault import waits for exports (doc 11) |
 | 3 | Indicator, structure, session, volatility/regime and macro research modules | — |
 | 4 | Pre-registered gold scalping hypotheses plus a reproducible backtesting framework | — |
 | 5 | Out-of-sample validation with realistic costs | — |

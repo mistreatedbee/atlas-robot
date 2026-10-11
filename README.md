@@ -21,6 +21,8 @@ Start with [docs/00_scope_xauusd.md](docs/00_scope_xauusd.md), then [docs/01_res
 | [08 Roadmap](docs/08_roadmap.md) | 8-phase plan, Phase 1 status, next milestone and its exact tests |
 | [09 Decisions and risks](docs/09_decisions_and_risks.md) | Open decisions for you, technical risks |
 | [10 Vault Markets data checklist](docs/10_vault_markets_data_checklist.md) | Step-by-step: what to get from support and MT5, file names, support message |
+| [11 Status and backlog](docs/11_status_and_backlog.md) | Current state with evidence, prioritised backlog, blockers |
+| [12 Decision log](docs/12_decision_log.md) | Engineering decisions, reasons, how to reverse |
 
 ## Setup
 
