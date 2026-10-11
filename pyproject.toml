@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-research"
+version = "0.1.0"
+description = "Project Atlas Phase 1: market-data ingestion, validation and storage for research. No trading."
+requires-python = ">=3.11"
+dependencies = ["certifi>=2024.2.2"]   # CA bundle for verified HTTPS; everything else is the standard library
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+atlas = "atlas.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["atlas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits real external APIs; run with ATLAS_LIVE_TESTS=1"]

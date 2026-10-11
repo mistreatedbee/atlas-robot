@@ -1,0 +1,21 @@
+# Instrument registry. Project scope is XAU/USD only (see [scope] in atlas.toml).
+# `symbols` maps a provider name (from atlas.toml) to that provider's own symbol. Broker symbols
+# vary (XAUUSD, XAUUSD.m, XAUUSDm, GOLD, ...); set the exact one once the broker is chosen.
+# Contract specifications below are PLACEHOLDERS until confirmed from the broker's symbol
+# specification (MT5: right-click symbol -> Specification). Do not use them for sizing before then.
+
+[[instrument]]
+id = "XAUUSD"
+asset_class = "metal_spot"
+base = "XAU"
+quote = "USD"
+session_calendar = "xau_cfd"
+price_increment = 0.01          # UNCONFIRMED: some brokers quote 3 decimals (0.001)
+enabled = true
+rationale = "Sole authorised instrument: spot gold vs US dollar, researched for M1/M5 scalping with higher-timeframe context."
+symbols = { sample_synthetic = "XAUUSD", user_csv = "XAUUSD" }
+
+[instrument.contract]           # all UNCONFIRMED until the broker is chosen
+contract_size_oz = 100          # per 1.0 lot (common convention)
+min_volume_lots = 0.01
+volume_step_lots = 0.01
