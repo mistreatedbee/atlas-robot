@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import tomllib
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 from ..brokers.spec import SpecStatus, load_spec
 from ..ingest import system_clock_ms
 from ..models import timeframe_ms
-from ..research.ledger import Ledger, hash_candles
+from ..research.ledger import Ledger, hash_candles, sha256_json
 from ..research.splits import DAY_MS, Period, Splits, required_embargo_ms
 from ..risk.gate import RiskLimits
 from ..sessions import XauCfd
@@ -107,43 +108,70 @@ def _candles(store: Store, exp: Experiment, period: Period):
     return before + inside
 
 
+def _register_setup_failure(ledger: Ledger, exp: Experiment, period_name: str, exc: BaseException) -> str:
+    """Finding 9: failures before a run starts (bad spec, limits, params, multiplier) are recorded too."""
+    exp_id, _ = ledger.register(name=exp.name, strategy=exp.strategy_name, hypothesis_id=exp.hypothesis_id,
+                                period=period_name, config={"raw_experiment": exp.raw, "stage": "setup"},
+                                data_selection={"period": period_name}, cost_status="unknown",
+                                spec_label="unavailable", now_ms=system_clock_ms(), allow_repeat_test=True)
+    ledger.fail(exp_id, error=f"setup: {type(exc).__name__}: {exc}", now_ms=system_clock_ms())
+    return exp_id
+
+
 def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_multiplier: float = 1.0,
                    confirm_test: bool = False, allow_repeat_test: bool = False,
                    strategy_override=None, name_suffix: str = "") -> tuple[str, dict]:
     if period_name == "test" and not confirm_test:
         raise ExperimentError("test-period runs require explicit confirmation (--confirm-test); "
                               "each hypothesis gets one look at the test set")
+    ledger = Ledger(store)
+    series = {k: exp.data[k] for k in ("instrument", "provider", "venue", "timeframe")}
+    test = exp.splits.get("test")
+    # The test window is reserved before ANY run of this config, so research runs can never touch it later.
+    ledger.reserve_test_window(series, test.start_ms, test.end_ms, hypothesis_id=exp.hypothesis_id,
+                               now_ms=system_clock_ms())
     period = exp.splits.get(period_name)
-    spec = load_spec(exp.spec_path)
-    limits = RiskLimits.load(exp.limits_path)
-    costs = exp.costs.scaled(cost_multiplier) if cost_multiplier != 1.0 else exp.costs
+    try:
+        spec = load_spec(exp.spec_path)
+        limits = RiskLimits.load(exp.limits_path)
+        base_costs = exp.costs
+        base_costs.validate(spec.symbol.tick_size or 0.0)
+        costs = base_costs.scaled(cost_multiplier) if cost_multiplier != 1.0 else base_costs
+        strategy = strategy_override or build_strategy(exp.strategy_name, exp.strategy_params)
+    except Exception as exc:
+        _register_setup_failure(ledger, exp, period_name, exc)
+        raise ExperimentError(f"setup failed (recorded in the ledger): {type(exc).__name__}: {exc}") from exc
     cost_status = "verified" if (spec.status is SpecStatus.VERIFIED and costs.status == "verified") \
         else "provisional_dev"
-    strategy = strategy_override or build_strategy(exp.strategy_name, exp.strategy_params)
-    ledger = Ledger(store)
-    config = {
-        "strategy_params": strategy.params(), "engine": exp.engine.__dict__, "costs": costs.as_dict(),
-        "risk_limits": limits.__dict__, "spec_sha256": spec.file_sha256, "cost_multiplier": cost_multiplier,
-        "rules": "docs/13_simulation_rules.md v2", "warmup_bars": exp.warmup_bars,
+    base_config = {
+        "strategy_params": strategy.params(), "engine": exp.engine.__dict__, "base_costs": base_costs.as_dict(),
+        "risk_limits": limits.__dict__, "spec_sha256": spec.file_sha256, "rules": "docs/13_simulation_rules.md v2.1",
+        "warmup_bars": exp.warmup_bars,
     }
-    selection = {**exp.data, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
+    selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
+    look_key = sha256_json({"config": base_config, "selection": selection, "strategy": strategy.name})
+    config = {**base_config, "costs": costs.as_dict(), "cost_multiplier": cost_multiplier}
     exp_id, _ = ledger.register(name=exp.name + name_suffix, strategy=strategy.name, hypothesis_id=exp.hypothesis_id,
                                 period=period_name, config=config, data_selection=selection,
                                 cost_status=cost_status, spec_label=spec.label, now_ms=system_clock_ms(),
+                                look_key=look_key, cost_multiplier=cost_multiplier,
                                 allow_repeat_test=allow_repeat_test)
     try:
         candles = _candles(store, exp, period)
         result = run_backtest(candles, strategy, spec=spec, limits=limits, costs=costs, calendar=XauCfd(),
                               config=exp.engine, trade_start_ms=period.start_ms, trade_end_ms=period.end_ms)
         metrics = compute_metrics(result)
-        labels = sorted(store.data_labels(exp.data["instrument"], exp.data["provider"], exp.data["timeframe"]))
+        labels = sorted(store.data_labels_in(series["instrument"], series["provider"], series["venue"],
+                                             series["timeframe"], candles[0].open_time, candles[-1].close_time))
         metrics["data_labels"] = labels
         metrics["cost_status"] = cost_status
-        metrics["eligible_bars_by_hour"] = result.eligible_bars_by_hour
+        metrics["decision_bars_by_hour"] = result.decision_bars_by_hour
+        if period_name == "test":
+            metrics["test_window_prior_looks"] = json.loads(ledger.get(exp_id)["data_selection_json"])[
+                "test_window_prior_looks"]
         ledger.complete(exp_id, data_sha256=hash_candles(candles), data_label=",".join(labels), metrics=metrics,
                         trades=[t.record() for t in result.trades],
-                        events=[{"bar_time": e.time, "kind": e.kind, "detail": e.detail} for e in result.events
-                                if e.kind != "decision"],
+                        events=[{"bar_time": e.time, "kind": e.kind, "detail": e.detail} for e in result.events],
                         now_ms=system_clock_ms())
     except BaseException as exc:
         ledger.fail(exp_id, error=f"{type(exc).__name__}: {exc}", now_ms=system_clock_ms())
@@ -152,15 +180,20 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
     return exp_id, metrics
 
 
-def matched_random_percentile(store: Store, exp: Experiment, period_name: str, *, seeds: int,
-                              stop_usd: float, tp_usd: float | None) -> dict:
-    """R9.2: where does the strategy's net P&L rank among matched random-entry runs? Runs are NOT ledgered
-    individually; the summary is ledgered as one experiment."""
+def matched_random_percentile(store: Store, exp: Experiment, period_name: str, *, seeds: int) -> dict:
+    """R9.2: rank the strategy's net P&L among random-entry runs matched on SIGNALS per UTC hour, with the
+    strategy's own stop / take-profit, gate and window rules. The summary is recorded in the ledger."""
     if period_name == "test":
         raise ExperimentError("matched random baselines are a research tool; run them on train/validation only")
+    strategy = build_strategy(exp.strategy_name, exp.strategy_params)
+    stop_usd = getattr(strategy, "stop_usd", None)
+    if not stop_usd:
+        raise ExperimentError(f"strategy {exp.strategy_name} exposes no stop_usd; cannot build a matched baseline")
+    tp_usd = getattr(strategy, "tp_usd", None)
     exp_id, m = run_experiment(store, exp, period_name)
     result = m.pop("_result")
-    probs = matched_hourly_probabilities(result.trades, result.eligible_bars_by_hour)
+    decisions = [e.time for e in result.events if e.kind == "decision"]
+    probs = matched_hourly_probabilities(decisions, result.decision_bars_by_hour)
     period = exp.splits.get(period_name)
     spec, limits = load_spec(exp.spec_path), RiskLimits.load(exp.limits_path)
     candles = _candles(store, exp, period)
@@ -172,7 +205,21 @@ def matched_random_percentile(store: Store, exp: Experiment, period_name: str, *
         pnls.append(r.equity_curve[-1][1] - r.initial_equity)
     below = sum(p < m["net_pnl"] for p in pnls)
     ties = sum(p == m["net_pnl"] for p in pnls)
-    return {"strategy_experiment_id": exp_id, "strategy_net_pnl": m["net_pnl"], "seeds": seeds,
-            "percentile": (below + 0.5 * ties) / seeds if seeds else math.nan,
-            "random_net_pnl_median": sorted(pnls)[len(pnls) // 2] if pnls else None,
-            "p_by_hour": probs}
+    summary = {"strategy_experiment_id": exp_id, "strategy_net_pnl": m["net_pnl"], "seeds": seeds,
+               "percentile": (below + 0.5 * ties) / seeds if seeds else math.nan,
+               "random_net_pnl_median": sorted(pnls)[len(pnls) // 2] if pnls else None,
+               "random_net_pnls": pnls, "p_by_hour": {str(k): v for k, v in sorted(probs.items())},
+               "stop_usd": stop_usd, "tp_usd": tp_usd}
+    ledger = Ledger(store)
+    series = {k: exp.data[k] for k in ("instrument", "provider", "venue", "timeframe")}
+    sid, _ = ledger.register(name=f"Matched random baseline for {exp.name}", strategy="matched_random",
+                             hypothesis_id=exp.hypothesis_id, period=period_name,
+                             config={"strategy_experiment_id": exp_id, "seeds": seeds, "p_by_hour": summary["p_by_hour"],
+                                     "stop_usd": stop_usd, "tp_usd": tp_usd},
+                             data_selection={**series, "period": period_name, "start_ms": period.start_ms,
+                                             "end_ms": period.end_ms},
+                             cost_status=m["cost_status"], spec_label=spec.label, now_ms=system_clock_ms())
+    ledger.complete(sid, data_sha256=hash_candles(candles), data_label=",".join(m["data_labels"]), metrics=summary,
+                    trades=[], events=[], now_ms=system_clock_ms())
+    summary["summary_experiment_id"] = sid
+    return summary

@@ -66,9 +66,9 @@ def compute_metrics(result: BacktestResult) -> dict:
         "expired_wait_by_hour": dict(Counter(e.detail for e in result.events if e.kind == "expired_wait")),
         "stopped_early": result.stopped_early,
     }
-    priced = [t for t in trades if t.planned_risk > 0]
+    priced = [t for t in trades if t.r_unit > 0]
     m["costs_per_trade_r"] = statistics.fmean(
-        (t.spread_cost_usd + t.slippage_cost_usd + t.commission_usd) * result.usd_to_account / t.planned_risk
+        (t.spread_cost_usd + t.slippage_cost_usd + t.commission_usd) * result.usd_to_account / t.r_unit
         for t in priced) if priced else None
     m.update(_drawdown(result.equity_curve, labels))
 

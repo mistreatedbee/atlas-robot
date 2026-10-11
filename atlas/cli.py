@@ -214,8 +214,8 @@ def cmd_random_baseline(settings, args) -> int:
 
     exp = load_experiment(settings.root / args.experiment, settings.root)
     with Store(settings.database_path) as store:
-        out = matched_random_percentile(store, exp, args.period, seeds=args.seeds, stop_usd=args.stop_usd,
-                                        tp_usd=args.tp_usd)
+        out = matched_random_percentile(store, exp, args.period, seeds=args.seeds)
+    out.pop("random_net_pnls", None)
     print(json.dumps(out, indent=2, default=str))
     return 0
 
@@ -291,8 +291,6 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--experiment", required=True)
     rb.add_argument("--period", required=True, choices=["train", "validation"])
     rb.add_argument("--seeds", type=int, default=1000)
-    rb.add_argument("--stop-usd", type=float, required=True)
-    rb.add_argument("--tp-usd", type=float)
 
     hl = sub.add_parser("health", help="operational health check (exit 0 ok, 1 warn, 2 critical)")
     hl.add_argument("--max-data-age-minutes", type=float, help="staleness threshold in trading minutes (real data only)")

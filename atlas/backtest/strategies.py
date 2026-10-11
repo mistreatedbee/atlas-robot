@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from collections.abc import Sequence
 
 from ..models import Candle
@@ -24,6 +23,21 @@ class NoTrade:
 
     def decide(self, i: int) -> Signal | None:
         return None
+
+
+_MASK = (1 << 64) - 1
+
+
+def _splitmix64(x: int) -> int:
+    x = (x + 0x9E3779B97F4A7C15) & _MASK
+    x = ((x ^ (x >> 30)) * 0xBF58476D1CE4E5B9) & _MASK
+    x = ((x ^ (x >> 27)) * 0x94D049BB133111EB) & _MASK
+    return x ^ (x >> 31)
+
+
+def _uniform(seed: int, t: int, k: int) -> float:
+    """Deterministic U[0,1) from (seed, bar time, draw index): independent of how much data follows."""
+    return _splitmix64(_splitmix64(_splitmix64(seed & _MASK) ^ (t & _MASK)) ^ k) / 2.0 ** 64
 
 
 class RandomEntry:
@@ -56,11 +70,10 @@ class RandomEntry:
 
     def decide(self, i: int) -> Signal | None:
         c = self._candles[i]
-        rng = random.Random(f"{self.seed}:{c.open_time}")
         p = self.p if self.p is not None else self.p_by_hour.get((c.close_time // 3_600_000) % 24, 0.0)
-        if rng.random() >= p:
+        if _uniform(self.seed, c.open_time, 0) >= p:
             return None
-        return Signal("buy" if rng.random() < 0.5 else "sell", self.stop_usd, self.tp_usd)
+        return Signal("buy" if _uniform(self.seed, c.open_time, 1) < 0.5 else "sell", self.stop_usd, self.tp_usd)
 
 
 class SessionLong:
@@ -92,10 +105,11 @@ class SessionLong:
         return Signal("buy", self.stop_usd, None)
 
 
-def matched_hourly_probabilities(strategy_trades: Sequence, eligible_bars_by_hour: dict[int, int]) -> dict[int, float]:
-    """R9.2: per-UTC-hour entry probability = strategy entries / eligible decision bars in that hour."""
+def matched_hourly_probabilities(decision_times: Sequence[int], decision_bars_by_hour: dict[int, int]) -> dict[int, float]:
+    """R9.2: per-UTC-hour SIGNAL probability = strategy signals / decision bars in that hour. Matching on signals
+    (not fills) lets the random baseline pass through the same gate and windows as the strategy did."""
     counts: dict[int, int] = {}
-    for t in strategy_trades:
-        h = (t.decision_time // 3_600_000) % 24
+    for t in decision_times:
+        h = (t // 3_600_000) % 24
         counts[h] = counts.get(h, 0) + 1
-    return {h: min(1.0, counts.get(h, 0) / n) for h, n in eligible_bars_by_hour.items() if n > 0}
+    return {h: min(1.0, counts.get(h, 0) / n) for h, n in decision_bars_by_hour.items() if n > 0}

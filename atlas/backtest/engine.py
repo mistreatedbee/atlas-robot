@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
 from ..brokers.spec import BrokerSpec
-from ..models import Candle, timeframe_ms
+from ..models import Candle, PriceBasis, timeframe_ms
 from ..risk.gate import AccountState, CostInputs, Mode, RiskLimits, TradeIntent, evaluate
 from ..sessions import XauCfd, is_open_at, trading_day
 from .costs import CostModel
@@ -67,7 +67,8 @@ class Trade:
     lots: float
     stop: float
     tp: float | None
-    planned_risk: float  # account currency, from the risk gate
+    planned_risk: float  # account currency, from the risk gate (includes spread + slippage allowance)
+    r_unit: float = 0.0  # loss of a clean stop-out from the fill: (|entry-stop| + slippage) x oz x lots + commission
     exit_time: int | None = None
     exit_price: float | None = None
     exit_reason: str | None = None
@@ -101,6 +102,7 @@ class BacktestResult:
     bars_total: int
     bars_in_position: int
     eligible_bars_by_hour: dict[int, int]
+    decision_bars_by_hour: dict[int, int]  # in-period bars at whose close the strategy was asked to decide
     initial_equity: float
     usd_to_account: float
     stopped_early: str | None = None
@@ -148,6 +150,8 @@ def run_backtest(
     for a, b in zip(candles, candles[1:]):
         if b.open_time <= a.open_time:
             raise ValueError("candles must be strictly increasing")
+    if any(c.price_basis is not PriceBasis.BID for c in candles):
+        raise ValueError("the engine requires BID-based bars (docs/13 R1.1); other price bases would misstate costs")
     sym = spec.symbol
     tick, oz = sym.tick_size, sym.contract_size
     costs.validate(tick)
@@ -164,6 +168,7 @@ def run_backtest(
     curve: list[tuple[int, float]] = []
     daily: dict[str, list[float]] = {}
     eligible: dict[int, int] = {}
+    decision_bars: dict[int, int] = {}
     realised = config.initial_equity
     mtm = realised
     peak = realised
@@ -181,7 +186,8 @@ def run_backtest(
         nonlocal position, realised
         tr = position.trade
         tr.exit_time = candles[i].close_time if reason in ("max_hold", "session_close", "end_of_data", "period_end") \
-            else candles[i].open_time if reason in ("stop_gap", "tp_gap") else candles[i].close_time
+            else candles[i].open_time if reason in ("stop_gap", "tp_gap", "held_through_closure") \
+            else candles[i].close_time
         tr.exit_price = round(price, 10)
         tr.exit_reason = reason
         direction = 1 if tr.side == "buy" else -1
@@ -193,7 +199,7 @@ def run_backtest(
         tr.slippage_cost_usd += slip * oz * tr.lots
         tr.net_usd = tr.gross_usd - tr.commission_usd
         tr.net_account = tr.net_usd * fx
-        tr.r_multiple = tr.net_account / tr.planned_risk if tr.planned_risk > 0 else float("nan")
+        tr.r_multiple = tr.net_account / tr.r_unit if tr.r_unit > 0 else float("nan")
         realised += tr.gross_usd * fx - half_comm * fx  # entry half was charged at entry
         trades.append(tr)
         position = None
@@ -208,8 +214,10 @@ def run_backtest(
         slip = costs.slippage_usd
 
         label = trading_day(b)
+        in_period = start <= b < end
         if label != day_label:
             day_label, day_start, trades_today = label, mtm, 0
+        if in_period and label not in daily:  # warm-up bars never enter the results (finding 11)
             daily[label] = [mtm, mtm]
 
         # ---- 1. pending order (R2.2-R2.4, R3) -----------------------------------------------------
@@ -247,6 +255,8 @@ def run_backtest(
                     else:
                         tr = Trade(sig.side, candles[j].close_time, b, fill, decision.lots, stop, tp,
                                    decision.risk_account_ccy, trading_day=label)
+                        tr.r_unit = ((abs(fill - stop) + slip) * oz * decision.lots
+                                     + (sym.commission_per_lot_round_turn or 0.0) * decision.lots) * fx
                         tr.slippage_cost_usd = slip * oz * decision.lots
                         half_comm = (sym.commission_per_lot_round_turn or 0.0) / 2 * decision.lots
                         realised -= half_comm * fx
@@ -260,8 +270,16 @@ def run_backtest(
             long = tr.side == "buy"
             if position.entry_index < i:
                 prev = candles[i - 1]
-                if b != prev.close_time and not closure_between(prev.close_time, b):
+                if b != prev.close_time and closure_between(prev.close_time, b):
+                    # R4.7: the pre-close session exit never fired (quiet minutes missing before the closure).
+                    # Exit at the first bar after the closure at its open: the gap risk is borne, never avoided.
+                    tr.held_through_gap = True
+                    close_position(i, c.open - slip if long else ask_open + slip, "held_through_closure", slip)
+                elif b != prev.close_time:
                     tr.held_through_gap = True  # unexpected data gap held (R4.4)
+            if position is not None:
+                # R4.1 applies on the entry bar too: a stop inside the spread is hit at the open, never filled
+                # better than the market.
                 if long and c.open <= tr.stop:
                     close_position(i, c.open - slip, "stop_gap", slip)
                 elif long and tr.tp is not None and c.open >= tr.tp:
@@ -302,13 +320,14 @@ def run_backtest(
         unreal = 0.0
         if position is not None:
             tr = position.trade
-            bars_in_pos += 1
+            bars_in_pos += in_period
             mark = c.close if tr.side == "buy" else ask_close
             unreal = (mark - tr.entry_price) * (1 if tr.side == "buy" else -1) * oz * tr.lots * fx
         mtm = realised + unreal
         peak = max(peak, mtm)
-        curve.append((e, mtm))
-        daily[label][1] = mtm
+        if in_period:
+            curve.append((e, mtm))
+            daily[label][1] = mtm
         if mtm <= 0:
             stopped = "equity_exhausted"
             events.append(Event(e, "stopped", "equity <= 0"))
@@ -316,8 +335,9 @@ def run_backtest(
 
         # ---- 5. decision at the close (R2.1, R2.5) --------------------------------------------------
         if start <= b and e <= end:
+            hour = (e // 3_600_000) % 24
+            decision_bars[hour] = decision_bars.get(hour, 0) + 1
             if position is None and pending is None:
-                hour = (e // 3_600_000) % 24
                 eligible[hour] = eligible.get(hour, 0) + 1
             sig = strategy.decide(i)
             if sig is not None:
@@ -333,5 +353,7 @@ def run_backtest(
                     pending = (i, sig)
                     events.append(Event(e, "signal", f"{sig.side} stop={sig.stop_usd} tp={sig.tp_usd}"))
 
-    return BacktestResult(trades, events, curve, daily, len(curve), bars_in_pos, eligible,
+    if not curve:  # nothing in period: keep the starting point so metrics are well-defined
+        curve.append((start, mtm))
+    return BacktestResult(trades, events, curve, daily, len(curve), bars_in_pos, eligible, decision_bars,
                           config.initial_equity, fx, stopped)

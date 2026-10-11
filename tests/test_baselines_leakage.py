@@ -78,11 +78,9 @@ def test_r500_account_cannot_trade_any_baseline(sample):
     assert rejections and all("minimum_volume_within_risk_limit" in e.detail for e in rejections)
 
 
-def test_matched_probabilities():
-    class T:
-        def __init__(self, h):
-            self.decision_time = utc_ms(2026, 8, 4, h, 5)
-    probs = matched_hourly_probabilities([T(10), T(10), T(14)], {10: 20, 14: 10, 3: 5})
+def test_matched_probabilities_use_signals_per_decision_bar():
+    times = [utc_ms(2026, 8, 4, 10, 5), utc_ms(2026, 8, 4, 10, 35), utc_ms(2026, 8, 4, 14, 5)]
+    probs = matched_hourly_probabilities(times, {10: 20, 14: 10, 3: 5})
     assert probs == {10: 0.1, 14: 0.1, 3: 0.0}
 
 

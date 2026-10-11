@@ -1,12 +1,13 @@
-# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2
+# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.1
 
 *Author: quantitative researcher role. v1 was challenged by the independent reviewer (15 findings). This v2 adopts
 them as recorded in the table at the end. Where a rule could go either way, it leans toward overstating costs and
 losses.*
 
 ## R1 Data
-1. **Input:** one stored candle series (XAUUSD, one provider/venue, M1 or M5), excluding `invalid` candles. Bars are
-   **bid** OHLC. Missing bars are never synthesised.
+1. **Input:** one stored candle series (XAUUSD, one provider/venue, M1 or M5), excluding `invalid` candles. Bars must
+   be **bid** OHLC; other price bases are rejected (v2.1). Missing bars are never synthesised. Warm-up bars do not
+   enter results: equity curve, daily returns and exposure count only bars in the period.
 2. **Results inherit the data label.** `synthetic_sample` results are software tests only, and the ledger says so.
 3. **Spread used at bar t:**
    - `spread(t) = max(model spread at t, bar spread_points × tick_size)`. The bar value is used only when the source reports it.
@@ -77,8 +78,17 @@ losses.*
 4. **Unexpected data gaps are held**, never anticipated. The first bar after the gap applies R4.1, and the trade is
    flagged `held_through_gap`.
 5. Losses beyond the planned risk (gap fills) are recorded as they occur. R-multiples below −1 are never capped.
+   - **R unit (v2.1)** = (|entry − stop| + slippage) × oz × lots × FX + round-turn commission. A clean stop-out is
+     exactly −1R.
+   - The gate's planned risk, which also counts the spread, is reported separately as `planned_risk`.
 6. Holding through scheduled closures is not supported in v1. Swap costs are unverified, so session exits are
    mandatory.
+7. **Missed session exit (v2.1).** If no bar closed inside the pre-close buffer, for example because the quiet
+   minutes before 17:00 New York are missing, the position is closed at the **open of the first bar after the
+   closure**: bid_open − slippage for a long, ask_open + slippage for a short. The reason is `held_through_closure`.
+   The gap risk is borne, never avoided.
+8. **Entry bar (v2.1).** R4.1 also applies on the entry bar. A stop inside the spread is hit at that bar's open and
+   is never filled better than the market.
 
 ## R5 Costs and currency
 1. Spread is implicit in bid/ask fills. Slippage applies to market, stop and time exits.
@@ -101,8 +111,15 @@ losses.*
 1. Train, validation and test periods must be chronological and must not overlap.
    - **Embargo** ≥ max(1 day, (max_hold_bars + longest indicator lookback) × timeframe).
 2. Bars before a period may be used for indicator warm-up only. No orders are decided or filled before the period start.
-3. A **test-period** run requires an explicit flag and a `hypothesis_id`. A second test run of the same
-   **hypothesis** (any parameters) is refused unless overridden, and the override is recorded.
+3. A **test-period** run requires an explicit flag and a `hypothesis_id`.
+4. **Reserving the test window (v2.1).** The test window is reserved per data series before any run of the config.
+   - A window cannot be reserved on data that an earlier non-test run already used.
+   - Once reserved, no train or validation run may overlap it.
+5. **One look per hypothesis (v2.1).** A hypothesis gets one *look* at the test set. A look is its configuration
+   without the cost multiplier, so the ×1.5 and ×2 stress runs belong to the same look.
+   - A different configuration, or an exact repeat, is refused unless overridden, and the override is recorded.
+6. **Prior looks are recorded (v2.1).** Every test run records how many prior looks the window has had, for
+   multiple-testing adjustment.
 
 ## R8 Metrics (net of all costs)
 - **Trade results:** net P&L (account currency and USD), return %, trade count, win rate (win = net > 0),
@@ -120,8 +137,11 @@ losses.*
 ## R9 Baselines
 1. **No-trade:** the benchmark every strategy must beat after costs.
 2. **Matched random entry:**
-   - Entry probability per UTC-hour bucket = the strategy's entries ÷ the eligible bars in that bucket.
-   - It copies the strategy's stop, take-profit, max-hold, gate and window rules, with random side.
+   - Signal probability per UTC-hour bucket = the strategy's **signals** ÷ the decision bars in that bucket (v2.1).
+     Matching on signals rather than fills lets the random entries pass through the same gate and window
+     filtering as the strategy did.
+   - It copies the strategy's own stop and take-profit, plus its max-hold, gate and window rules, with random side.
+   - The summary is recorded in the ledger.
    - Run over N seeds (≥ 1,000 for conclusions; fewer only in software tests); report the strategy's percentile.
 3. **Session-long:**
    - Enters long once per trading day at the first decision after the reopen window.
@@ -153,3 +173,19 @@ For ≥ 20 cut points T (including cuts adjacent to closures):
 | 13 | Missing quiet M1 bars expire orders | Adopted with change: fill at the next bar within `max_fill_wait`; expiries reported by hour |
 | 14 | Constant FX rate | Partially: constant rate kept and labelled; USD P&L also reported; daily FX series on the backlog |
 | 15 | Trading-day label | Adopted (R6.3) |
+
+## Review disposition (v2 → v2.1, implementation review of commit 0937580)
+| # | Finding | Fix |
+|---|---|---|
+| 1 | Position held through a closure when the pre-close bars were missing | R4.7 `held_through_closure` exit at the first open after the closure |
+| 2 | The safety scan had been weakened | Word patterns restored; only SQL trigger clauses exempted; behavioural GET-only test added |
+| 3 | Price basis not checked | Engine rejects non-bid bars |
+| 4 | Ledger child rows could be inserted or edited; status fields were mutable | Triggers added; result hash covers events |
+| 5 | Test guard could be bypassed through period dates or the hypothesis id | Reserved test windows per series; one look per hypothesis; stress runs belong to the same look |
+| 6 | Matched baseline not ledgered and not matched | Matched on signals; strategy's own stop/take-profit; summary ledgered |
+| 7 | A stop inside the spread filled better than the market | R4.8 entry-bar gap rule |
+| 8 | R-multiples scaled by planned risk | R unit defined from realised stop risk (R4.5) |
+| 9 | Setup failures were not recorded | Registered as failed experiments |
+| 10 | `code_version` ignored untracked files | Fixed |
+| 11 | Warm-up bars counted in results | Excluded (R1.1) |
+| 12 | Data labels came from the whole series | Taken from the rows actually used |

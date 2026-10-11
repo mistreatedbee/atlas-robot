@@ -93,11 +93,13 @@ def test_r500_records_rejections_not_trades(store):
 
 
 def test_matched_random_percentile(store):
-    out = matched_random_percentile(store, exp("baseline_random_entry_sample"), "train", seeds=20,
-                                    stop_usd=3.0, tp_usd=4.5)
+    out = matched_random_percentile(store, exp("baseline_random_entry_sample"), "train", seeds=20)
     assert 0.0 <= out["percentile"] <= 1.0 and out["seeds"] == 20
+    assert (out["stop_usd"], out["tp_usd"]) == (3.0, 4.5)  # copied from the strategy, not supplied separately
+    rec = Ledger(store).get(out["summary_experiment_id"])  # finding 6: the summary is ledgered
+    assert rec["status"] == "completed" and rec["strategy"] == "matched_random"
     with pytest.raises(ExperimentError):
-        matched_random_percentile(store, exp("baseline_random_entry_sample"), "test", seeds=2, stop_usd=3.0, tp_usd=None)
+        matched_random_percentile(store, exp("baseline_random_entry_sample"), "test", seeds=2)
 
 
 def test_invalid_experiment_configs(tmp_path):
@@ -109,3 +111,21 @@ def test_invalid_experiment_configs(tmp_path):
     from atlas.research.splits import SplitError
     with pytest.raises(SplitError):
         load_experiment(tmp_path / "b.toml", ROOT)
+
+
+def test_finding_9_setup_failures_are_recorded(store, tmp_path):
+    text = (ROOT / "experiments/baseline_random_entry_sample.toml").read_text().replace(
+        "params = { seed = 1,", "params = { bogus = 1, seed = 1,")
+    (tmp_path / "bad.toml").write_text(text)
+    with pytest.raises(ExperimentError, match="setup failed"):
+        run_experiment(store, load_experiment(tmp_path / "bad.toml", ROOT), "train")
+    rec = Ledger(store).list(1)[0]
+    assert rec["status"] == "failed" and rec["error"].startswith("setup:")
+    with pytest.raises(ExperimentError, match="setup failed"):
+        run_experiment(store, exp("baseline_no_trade_sample"), "train", cost_multiplier=0.5)
+    assert Ledger(store).list(1)[0]["status"] == "failed"
+
+
+def test_finding_12_data_labels_are_those_of_the_data_used(store):
+    exp_id, m = run_experiment(store, exp("baseline_no_trade_sample"), "train")
+    assert m["data_labels"] == ["synthetic_sample"]

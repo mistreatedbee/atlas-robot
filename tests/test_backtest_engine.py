@@ -16,6 +16,7 @@ from atlas.backtest.costs import CostModel, CostModelError
 from atlas.backtest.engine import EngineConfig, Signal, run_backtest
 from atlas.backtest.metrics import compute_metrics
 from atlas.brokers.spec import load_spec
+from atlas.models import PriceBasis
 from atlas.risk.gate import RiskLimits
 from atlas.sessions import XauCfd
 
@@ -30,7 +31,8 @@ T0 = utc_ms(2026, 7, 14, 10, 0)  # Tuesday, mid London session
 
 
 def bar(t, o, h, l, c, **kw):
-    return make_candle(t, tf="M5", instrument_id="XAUUSD", open=o, high=h, low=l, close=c, **kw)
+    return make_candle(t, tf="M5", instrument_id="XAUUSD", open=o, high=h, low=l, close=c,
+                       price_basis=PriceBasis.BID, **kw)
 
 
 class Scripted:
@@ -78,7 +80,8 @@ def test_long_take_profit_matches_hand_calculation():
     assert t.gross_usd == pytest.approx(123.0)           # 3.00 x 100 x 0.41
     assert t.net_account == pytest.approx(1230.0)
     assert t.spread_cost_usd == pytest.approx(12.3) and t.slippage_cost_usd == pytest.approx(4.1)
-    assert t.r_multiple == pytest.approx(1230 / 984)
+    # R unit = (|2400.40 - 2398.40| + 0.10 slippage) x 100 oz x 0.41 x 10 = 861 (planned_risk 984 adds spread)
+    assert t.r_multiple == pytest.approx(1230 / 861)
     assert r.equity_curve[-1][1] == pytest.approx(101_230.0)
 
 
@@ -93,6 +96,7 @@ def test_both_levels_in_one_bar_assumes_stop_first():
     (t,) = run(bars, BUY).trades
     assert (t.exit_reason, t.exit_price) == ("stop", 2398.30)  # stop 2398.40 - slippage
     assert t.net_account == pytest.approx((2398.30 - 2400.40) * 41 * 10)
+    assert t.r_multiple == pytest.approx(-1.0)  # a clean stop-out is exactly -1R (review finding 8)
 
 
 def test_gap_through_stop_fills_at_open_and_r_is_not_capped():
@@ -100,7 +104,7 @@ def test_gap_through_stop_fills_at_open_and_r_is_not_capped():
     (t,) = run(bars, BUY).trades
     assert (t.exit_reason, t.exit_price) == ("stop_gap", 2396.90)
     assert t.net_account == pytest.approx(-1435.0)
-    assert t.r_multiple == pytest.approx(-1435 / 984) and t.r_multiple < -1
+    assert t.r_multiple == pytest.approx(-1435 / 861) and t.r_multiple < -1
 
 
 def test_gap_through_take_profit_fills_at_tp_only():
@@ -250,9 +254,42 @@ def test_metrics_definitions():
     assert m["profit_factor"] == "undefined (0 losses)"
     assert m["net_pnl"] == pytest.approx(1230.0) and m["net_pnl_usd"] == pytest.approx(123.0)
     assert m["sharpe"] is None and "trading days" in m["sharpe_note"]
-    assert m["costs_per_trade_r"] == pytest.approx((12.3 + 4.1) * 10 / 984)
+    assert m["costs_per_trade_r"] == pytest.approx((12.3 + 4.1) * 10 / 861)
     loss_bars = base_bars() + [bar(T0 + 2 * M5, 2397.0, 2397.5, 2396.5, 2397.2)]
     ml = compute_metrics(run(loss_bars, BUY))
     # mark-to-market peak includes bar 1's open gain: (2400.80 - 2400.40) x 41 oz x 10 = 164
     assert ml["max_drawdown"] == pytest.approx(1435.0 + 164.0) and ml["drawdown_unrecovered_at_end"] is True
     assert ml["avg_loss"] == pytest.approx(-1435.0) and ml["avg_win"] is None
+
+
+# ---- review findings (backtester) ---------------------------------------------------------------------
+
+def test_finding_1_missing_pre_close_bars_cannot_carry_a_position_through_the_break():
+    # last bar 20:40-20:45 UTC, then nothing until 22:00 (daily break 21:00-22:00): the session exit never fires
+    bars = [bar(utc_ms(2026, 7, 14, 20, 35), 2400, 2400.5, 2399.5, 2400),
+            bar(utc_ms(2026, 7, 14, 20, 40), 2400, 2400.5, 2399.6, 2400),
+            bar(utc_ms(2026, 7, 14, 22, 0), 2395, 2395.5, 2394.5, 2395),
+            bar(utc_ms(2026, 7, 14, 22, 5), 2395, 2395.5, 2394.5, 2395)]
+    (t,) = run(bars, {0: Signal("buy", 10.0, None)}).trades
+    assert t.exit_reason == "held_through_closure" and t.held_through_gap
+    assert t.exit_time == utc_ms(2026, 7, 14, 22, 0) and t.exit_price == pytest.approx(2394.90)  # open - slip
+
+
+def test_finding_3_non_bid_bars_rejected():
+    bars = [make_candle(T0, tf="M5", instrument_id="XAUUSD"), make_candle(T0 + M5, tf="M5", instrument_id="XAUUSD")]
+    with pytest.raises(ValueError, match="BID"):
+        run(bars, {})
+
+
+def test_finding_7_stop_inside_the_spread_is_hit_at_the_open():
+    # buy fill 2400.40 with a 0.20 stop -> stop 2400.20 > bid open 2400.00: exits at once at bid open - slip
+    bars = base_bars() + [bar(T0 + 2 * M5, 2400.5, 2401, 2400, 2400.5)]
+    (t,) = run(bars, {0: Signal("buy", 0.20, None)}).trades
+    assert (t.exit_reason, t.exit_time, t.exit_price) == ("stop_gap", T0 + M5, 2399.90)
+
+
+def test_finding_11_warm_up_bars_do_not_enter_results():
+    bars = [bar(T0 + k * M5, 2400, 2400.5, 2399.5, 2400) for k in range(10)]
+    r = run_backtest(bars, Scripted({}), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
+                     config=EngineConfig(initial_equity=100_000.0), trade_start_ms=T0 + 6 * M5)
+    assert r.bars_total == 4 and r.equity_curve[0][0] == T0 + 7 * M5

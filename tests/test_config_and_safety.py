@@ -72,16 +72,66 @@ SOURCE = [p for p in (ROOT / "atlas").rglob("*.py")]
 FORBIDDEN = [
     r"/api/v3/order", r"/fapi/v\d/order", r"newOrder", r"X-MBX-APIKEY", r"hmac", r"signature",
     r"api_secret", r"secret_key", r"place_order", r"submit_order",
-    # HTTP write verbs can only be sent as string literals; urllib sends POST implicitly when data= is passed.
-    r"[\"']POST[\"']", r"[\"']DELETE[\"']", r"[\"']PUT[\"']", r"[\"']PATCH[\"']",
-    r"Request\([^)]*data\s*=", r"urlopen\([^)]*data\s*=",
+    # HTTP write verbs as words (catches requests.post, httpx.put, session.delete, HTTPMethod.POST, "PATCH"...),
+    # plus urllib's implicit POST when a body is passed. Only SQL trigger syntax is exempted (see _scan_text).
+    r"\bPOST\b", r"\bDELETE\b", r"\bPUT\b", r"\bPATCH\b",
+    r"Request\(.*\bdata\s*=", r"urlopen\(.*\bdata\s*=", r"urlopen\(\s*[^,()]+,\s*[^=,()]+[,)]",
     r"order_send", r"order_check", r"MetaTrader5", r"\bmt5\.initialize", r"TRADE_ACTION_",
 ]
 
 
+def _scan_text(path: Path) -> str:
+    """Source text with ONLY SQL trigger clauses removed (e.g. 'BEFORE DELETE ON experiments')."""
+    return re.sub(r"\bBEFORE\s+(DELETE|UPDATE|INSERT)\b", "", path.read_text(), flags=re.IGNORECASE)
+
+
+@pytest.mark.parametrize("snippet", [
+    "requests.post(url)", "httpx.put(u)", "session.delete(x)", "HTTPMethod.POST", 'method="PATCH"',
+    "urllib.request.Request(url, data=b'x')", "urlopen(url, payload)", "urlopen(build(u), data=b'')",
+])
+def test_scan_catches_write_requests(snippet):
+    assert any(re.search(p, snippet, re.IGNORECASE) for p in FORBIDDEN), snippet
+
+
+def test_scan_exempts_only_sql_trigger_clauses(tmp_path):
+    f = tmp_path / "x.py"
+    f.write_text("CREATE TRIGGER t BEFORE DELETE ON experiments\nrequests.delete(u)\n")
+    text = _scan_text(f)
+    assert "BEFORE DELETE" not in text and re.search(r"\bDELETE\b", text, re.IGNORECASE)
+
+
+def test_http_transport_sends_only_bodiless_get(monkeypatch):
+    import urllib.request
+
+    from atlas import http as http_mod
+    seen = []
+
+    class FakeResp:
+        status = 200
+        headers = {}
+
+        def read(self):
+            return b"[]"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None, context=None):
+        seen.append(request)
+        return FakeResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    http_mod.urllib_transport("https://data-api.binance.vision/x", 5)
+    (req,) = seen
+    assert req.get_method() == "GET" and req.data is None
+
+
 @pytest.mark.parametrize("pattern", FORBIDDEN)
 def test_no_order_or_credential_code_in_package(pattern):
-    hits = [f"{p.relative_to(ROOT)}" for p in SOURCE if re.search(pattern, p.read_text(), re.IGNORECASE)]
+    hits = [f"{p.relative_to(ROOT)}" for p in SOURCE if re.search(pattern, _scan_text(p), re.IGNORECASE)]
     assert hits == [], f"pattern {pattern!r} found in {hits}"
 
 

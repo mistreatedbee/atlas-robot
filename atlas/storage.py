@@ -20,7 +20,7 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
@@ -164,6 +164,8 @@ CREATE TABLE IF NOT EXISTS experiments (
     spec_label           TEXT NOT NULL,
     code_version         TEXT NOT NULL,
     test_access_override INTEGER NOT NULL DEFAULT 0,
+    look_key             TEXT,              -- config hash WITHOUT the cost multiplier: one test-set look
+    cost_multiplier      REAL,
     metrics_json         TEXT,
     result_sha256        TEXT,
     error                TEXT
@@ -192,8 +194,35 @@ CREATE TRIGGER IF NOT EXISTS experiments_finalised_immutable BEFORE UPDATE ON ex
 WHEN OLD.status != 'running'
 BEGIN SELECT RAISE(ABORT, 'finished experiments are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS experiments_config_immutable BEFORE UPDATE OF config_json, config_sha256, name,
-    strategy, hypothesis_id, period, data_selection_json, created_at_utc, code_version ON experiments
+    strategy, hypothesis_id, period, data_selection_json, created_at_utc, code_version, test_access_override,
+    cost_status, spec_label, look_key, cost_multiplier ON experiments
 BEGIN SELECT RAISE(ABORT, 'experiment configuration is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_trades_only_while_running BEFORE INSERT ON experiment_trades
+WHEN (SELECT status FROM experiments WHERE experiment_id = NEW.experiment_id) IS NOT 'running'
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only: experiment is not running'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_events_only_while_running BEFORE INSERT ON experiment_events
+WHEN (SELECT status FROM experiments WHERE experiment_id = NEW.experiment_id) IS NOT 'running'
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only: experiment is not running'); END;
+CREATE TRIGGER IF NOT EXISTS experiment_events_no_update BEFORE UPDATE ON experiment_events
+BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
+
+-- Test windows are reserved per data series the first time an experiment declares them; afterwards no
+-- train/validation run may touch them. Rows are permanent.
+CREATE TABLE IF NOT EXISTS reserved_test_windows (
+    instrument_id  TEXT NOT NULL,
+    provider       TEXT NOT NULL,
+    venue          TEXT NOT NULL,
+    timeframe      TEXT NOT NULL,
+    start_ms       INTEGER NOT NULL,
+    end_ms         INTEGER NOT NULL,
+    reserved_by    TEXT NOT NULL,       -- hypothesis that first declared it
+    reserved_at_utc INTEGER NOT NULL,
+    PRIMARY KEY (instrument_id, provider, venue, timeframe, start_ms, end_ms)
+);
+CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_delete BEFORE DELETE ON reserved_test_windows
+BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
+CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_update BEFORE UPDATE ON reserved_test_windows
+BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
 CREATE TRIGGER IF NOT EXISTS experiment_trades_no_delete BEFORE DELETE ON experiment_trades
 BEGIN SELECT RAISE(ABORT, 'experiment ledger is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS experiment_trades_no_update BEFORE UPDATE ON experiment_trades
@@ -246,6 +275,8 @@ class Store:
     MIGRATIONS = {
         2: (("candles", "spread_points", "INTEGER"), ("ingestion_runs", "source_detail", "TEXT")),
         3: (),  # v3 only adds the experiment-ledger tables, created by the idempotent DDL below
+        4: (("experiments", "look_key", "TEXT"), ("experiments", "cost_multiplier", "REAL"),
+            "DROP TRIGGER IF EXISTS experiments_config_immutable"),  # recreated below with more frozen columns
     }
 
     def _columns(self, table: str) -> set[str]:
@@ -267,8 +298,14 @@ class Store:
         for target in range(version + 1, SCHEMA_VERSION + 1):
             self.conn.execute("BEGIN IMMEDIATE")
             try:
-                for table, column, coltype in self.MIGRATIONS[target]:
-                    if column not in self._columns(table):
+                for step in self.MIGRATIONS[target]:
+                    if isinstance(step, str):
+                        self.conn.execute(step)
+                        continue
+                    table, column, coltype = step
+                    existing_cols = self._columns(table)
+                    # A table that does not exist yet is created below by the DDL, already with the column.
+                    if existing_cols and column not in existing_cols:
                         self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
                 self.conn.execute("UPDATE schema_meta SET value=? WHERE key='schema_version'", (str(target),))
                 self.conn.execute("COMMIT")
@@ -458,6 +495,13 @@ class Store:
             ask_open=r["ask_open"], ask_high=r["ask_high"], ask_low=r["ask_low"], ask_close=r["ask_close"],
             spread_points=r["spread_points"],
         )
+
+    def data_labels_in(self, instrument_id: str, provider: str, venue: str, timeframe: str,
+                       start_ms: int, end_ms: int) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT data_label FROM candles WHERE instrument_id=? AND provider=? AND venue=? AND timeframe=? "
+            "AND open_time_utc>=? AND open_time_utc<?", (instrument_id, provider, venue, timeframe, start_ms, end_ms))
+        return {r[0] for r in rows}
 
     def data_labels(self, instrument_id: str, provider: str, timeframe: str) -> set[str]:
         rows = self.conn.execute(
