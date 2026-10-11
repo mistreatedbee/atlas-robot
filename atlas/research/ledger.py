@@ -4,15 +4,14 @@ Every backtest is registered BEFORE it runs (so crashes and failures are recorde
 Finished records cannot be edited or deleted, and trades/events cannot be added after completion (SQLite triggers).
 Failed and losing experiments stay forever.
 
-Test-set discipline (docs/13 R7.3):
-* Each experiment config declares its test window. The window is RESERVED per data series (instrument, provider,
-  venue, timeframe). A window cannot be reserved if any earlier non-test experiment already used overlapping data,
-  and once reserved, no train/validation run may overlap it - whatever its dates or hypothesis id say.
-* A "look" at the test set is identified by the configuration WITHOUT the cost multiplier, so the R5.4 stress runs
-  (x1.5, x2) belong to the same single look. A hypothesis gets one look; a different look, or an exact repeat,
-  is refused unless explicitly overridden, and the override is recorded.
-* Every test run records how many looks (by any hypothesis) the window has already had, for multiple-testing
-  adjustment.
+Test-set discipline (docs/13 R7.3-R7.6):
+* Each experiment config declares its test window, RESERVED per INSTRUMENT (any provider, venue or timeframe) in the
+  same transaction that registers the experiment. A window cannot be reserved on data an earlier non-test experiment
+  used; once reserved, no train/validation run may overlap it, whatever its dates, feed or hypothesis id.
+* A "look" = configuration (incl. code version) WITHOUT the cost multiplier. The stress runs x1.5 / x2 belong to the
+  same look, once each; other multipliers are refused on the test set. A hypothesis gets one look; a different look
+  or an exact repeat is refused unless overridden, and the override is recorded.
+* Every test run records how many OTHER looks overlapping windows have had, for multiple-testing adjustment.
 """
 
 from __future__ import annotations
@@ -66,44 +65,57 @@ def code_version(repo: Path | None = None) -> str:
 
 
 SERIES_KEYS = ("instrument", "provider", "venue", "timeframe")
+STRESS_MULTIPLIERS = (1.0, 1.5, 2.0)  # the only cost multipliers allowed on the test set (docs/13 R5.4)
+ANY = "*"
 
 
 class Ledger:
+    """Test windows are reserved per INSTRUMENT (across every provider, venue and timeframe): the same gold prices
+    seen through another feed or bar size are still the test set."""
+
     def __init__(self, store: Store):
         self.conn = store.conn
+        self._backfill_reservations()
 
     # ---- test windows ------------------------------------------------------------------------------
 
-    def reserve_test_window(self, series: dict, start_ms: int, end_ms: int, *, hypothesis_id: str, now_ms: int) -> None:
-        key = tuple(series[k] for k in SERIES_KEYS)
-        exists = self.conn.execute(
-            "SELECT 1 FROM reserved_test_windows WHERE instrument_id=? AND provider=? AND venue=? AND timeframe=? "
-            "AND start_ms=? AND end_ms=?", (*key, start_ms, end_ms)).fetchone()
-        if exists:
+    def _test_experiments(self) -> list[dict]:
+        out = []
+        for r in self.conn.execute("SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier, status, "
+                                   "created_at_utc, data_selection_json FROM experiments"):
+            sel = json.loads(r["data_selection_json"])
+            if "instrument" in sel and "start_ms" in sel:
+                out.append({**dict(r), "instrument": sel["instrument"], "start_ms": sel["start_ms"],
+                            "end_ms": sel["end_ms"]})
+        return out
+
+    def _backfill_reservations(self) -> None:
+        """Test runs recorded before reservations existed (schema < 4) get their windows reserved retroactively."""
+        try:
+            rows = [r for r in self._test_experiments() if r["period"] == "test"]
+        except Exception:  # tables not created yet in an unusual state: nothing to backfill
             return
-        used = [r for r in self._experiments_on(key) if r["period"] != "test"
+        with self.conn:
+            for r in rows:
+                self.conn.execute("INSERT OR IGNORE INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
+                                  (r["instrument"], ANY, ANY, ANY, r["start_ms"], r["end_ms"], r["hypothesis_id"],
+                                   r["created_at_utc"]))
+
+    def reserved_windows(self, instrument: str) -> list:
+        return self.conn.execute("SELECT * FROM reserved_test_windows WHERE instrument_id=?", (instrument,)).fetchall()
+
+    def _reserve_in_txn(self, instrument: str, start_ms: int, end_ms: int, hypothesis_id: str, now_ms: int) -> None:
+        """Must be called inside the transaction that registers the experiment declaring the window."""
+        if any(w["start_ms"] == start_ms and w["end_ms"] == end_ms for w in self.reserved_windows(instrument)):
+            return
+        used = [r for r in self._test_experiments() if r["instrument"] == instrument and r["period"] != "test"
                 and r["start_ms"] < end_ms and start_ms < r["end_ms"]]
         if used:
             raise LedgerError(
                 f"cannot reserve test window: {len(used)} earlier non-test experiment(s) already used overlapping "
-                f"data (e.g. {used[0]['experiment_id'][:8]}); a test set must be data nobody has looked at")
-        with self.conn:
-            self.conn.execute("INSERT INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
-                              (*key, start_ms, end_ms, hypothesis_id, now_ms))
-
-    def _reserved(self, key: tuple) -> list:
-        return self.conn.execute(
-            "SELECT * FROM reserved_test_windows WHERE instrument_id=? AND provider=? AND venue=? AND timeframe=?",
-            key).fetchall()
-
-    def _experiments_on(self, key: tuple) -> list[dict]:
-        out = []
-        for r in self.conn.execute("SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier, "
-                                   "data_selection_json FROM experiments"):
-            sel = json.loads(r["data_selection_json"])
-            if tuple(sel.get(k) for k in SERIES_KEYS) == key and "start_ms" in sel:
-                out.append({**dict(r), "start_ms": sel["start_ms"], "end_ms": sel["end_ms"]})
-        return out
+                f"{instrument} data (e.g. {used[0]['experiment_id'][:8]}); a test set must be data nobody has looked at")
+        self.conn.execute("INSERT INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
+                          (instrument, ANY, ANY, ANY, start_ms, end_ms, hypothesis_id, now_ms))
 
     def test_runs(self, hypothesis_id: str) -> int:
         return self.conn.execute(
@@ -115,47 +127,57 @@ class Ledger:
     def register(self, *, name: str, strategy: str, hypothesis_id: str, period: str, config: dict, data_selection: dict,
                  cost_status: str, spec_label: str, now_ms: int, look_key: str | None = None,
                  cost_multiplier: float = 1.0, allow_repeat_test: bool = False,
+                 reserve_test_window: tuple[int, int] | None = None,
                  version: str | None = None) -> tuple[str, str]:
-        """Record an experiment before it runs. Returns (experiment_id, config_sha256)."""
+        """Record an experiment before it runs (atomically with any test-window reservation it declares).
+        Returns (experiment_id, config_sha256)."""
         if period not in PERIODS:
             raise LedgerError(f"period must be one of {PERIODS}")
         if not hypothesis_id:
             raise LedgerError("hypothesis_id is required")
         config_sha = sha256_json({"config": config, "data_selection": data_selection, "strategy": strategy})
         look_key = look_key or config_sha
-        override = 0
-        series_known = all(k in data_selection for k in SERIES_KEYS) and "start_ms" in data_selection
-        if series_known:
-            key = tuple(data_selection[k] for k in SERIES_KEYS)
-            start, end = data_selection["start_ms"], data_selection["end_ms"]
-            if period != "test":
-                for w in self._reserved(key):
+        instrument = data_selection.get("instrument")
+        has_range = instrument is not None and "start_ms" in data_selection
+        exp_id = str(uuid.uuid4())
+        with self.conn:  # one transaction: reservation + checks + insert
+            if reserve_test_window is not None:
+                if instrument is None:
+                    raise LedgerError("a test window can only be reserved for a known instrument")
+                self._reserve_in_txn(instrument, *reserve_test_window, hypothesis_id, now_ms)
+            override = 0
+            if has_range and period != "test":
+                start, end = data_selection["start_ms"], data_selection["end_ms"]
+                for w in self.reserved_windows(instrument):
                     if start < w["end_ms"] and w["start_ms"] < end:
                         raise LedgerError(
-                            f"{period} period overlaps a reserved test window "
+                            f"{period} period overlaps a reserved {instrument} test window "
                             f"({w['start_ms']}..{w['end_ms']}, reserved by {w['reserved_by']}); "
-                            "test data cannot be used for research")
-        if period == "test":
-            if series_known:
-                prior = [r for r in self._experiments_on(tuple(data_selection[k] for k in SERIES_KEYS))
-                         if r["period"] == "test"]
-            else:  # no series information: fall back to all test runs (never to "no prior runs")
-                prior = [dict(r) for r in self.conn.execute(
-                    "SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier FROM experiments "
-                    "WHERE period='test'")]
-            mine = [r for r in prior if r["hypothesis_id"] == hypothesis_id]
-            other_look = [r for r in mine if r["look_key"] != look_key]
-            exact_repeat = [r for r in mine if r["look_key"] == look_key and r["cost_multiplier"] == cost_multiplier]
-            if (other_look or exact_repeat) and not allow_repeat_test:
-                raise LedgerError(
-                    f"hypothesis {hypothesis_id!r} was already evaluated on the test period "
-                    f"({len(mine)} run(s)); a different configuration or an exact repeat would be a second look at "
-                    "the test set (override is recorded). Cost-stress runs of the same configuration are allowed.")
-            override = int(bool(other_look or exact_repeat))
-            data_selection = {**data_selection,
-                              "test_window_prior_looks": len({(r["hypothesis_id"], r["look_key"]) for r in prior})}
-        exp_id = str(uuid.uuid4())
-        with self.conn:
+                            "test data cannot be used for research, from any provider or timeframe")
+            if period == "test":
+                if round(cost_multiplier, 9) not in STRESS_MULTIPLIERS:
+                    raise LedgerError(f"test-period cost multiplier must be one of {STRESS_MULTIPLIERS}")
+                if has_range:
+                    s0, e0 = data_selection["start_ms"], data_selection["end_ms"]
+                    prior = [r for r in self._test_experiments() if r["period"] == "test"
+                             and r["instrument"] == instrument and r["start_ms"] < e0 and s0 < r["end_ms"]]
+                else:  # no range information: fall back to all test runs (never to "no prior runs")
+                    prior = [dict(r) for r in self.conn.execute(
+                        "SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier FROM experiments "
+                        "WHERE period='test'")]
+                mine = [r for r in prior if r["hypothesis_id"] == hypothesis_id]
+                other_look = [r for r in mine if r["look_key"] != look_key]
+                exact_repeat = [r for r in mine if r["look_key"] == look_key
+                                and round(r["cost_multiplier"] or 1.0, 9) == round(cost_multiplier, 9)]
+                if (other_look or exact_repeat) and not allow_repeat_test:
+                    raise LedgerError(
+                        f"hypothesis {hypothesis_id!r} was already evaluated on the test period "
+                        f"({len(mine)} run(s)); a different configuration or code version, or an exact repeat, would "
+                        "be a second look at the test set (override is recorded). Stress runs x1.5 / x2 of the same "
+                        "configuration are allowed once each.")
+                override = int(bool(other_look or exact_repeat))
+                looks = {(r["hypothesis_id"], r["look_key"]) for r in prior} - {(hypothesis_id, look_key)}
+                data_selection = {**data_selection, "test_window_prior_looks": len(looks)}
             self.conn.execute(
                 """INSERT INTO experiments (experiment_id, created_at_utc, name, strategy, hypothesis_id, period, status,
                      config_json, config_sha256, data_selection_json, cost_status, spec_label, code_version,

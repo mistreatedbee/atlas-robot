@@ -293,3 +293,11 @@ def test_finding_11_warm_up_bars_do_not_enter_results():
     r = run_backtest(bars, Scripted({}), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
                      config=EngineConfig(initial_equity=100_000.0), trade_start_ms=T0 + 6 * M5)
     assert r.bars_total == 4 and r.equity_curve[0][0] == T0 + 7 * M5
+
+
+def test_recheck_B_closure_exit_is_capped_at_take_profit():
+    bars = [bar(utc_ms(2026, 7, 14, 20, 35), 2400, 2400.5, 2399.5, 2400),
+            bar(utc_ms(2026, 7, 14, 20, 40), 2400, 2400.5, 2399.6, 2400),
+            bar(utc_ms(2026, 7, 14, 22, 0), 2420, 2420.5, 2419.5, 2420)]   # gaps far beyond the TP
+    (t,) = run(bars, {0: Signal("buy", 10.0, 5.0)}).trades
+    assert (t.exit_reason, t.exit_price) == ("tp_gap", t.tp)

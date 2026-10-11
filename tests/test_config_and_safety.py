@@ -75,7 +75,9 @@ FORBIDDEN = [
     # HTTP write verbs as words (catches requests.post, httpx.put, session.delete, HTTPMethod.POST, "PATCH"...),
     # plus urllib's implicit POST when a body is passed. Only SQL trigger syntax is exempted (see _scan_text).
     r"\bPOST\b", r"\bDELETE\b", r"\bPUT\b", r"\bPATCH\b",
-    r"Request\(.*\bdata\s*=", r"urlopen\(.*\bdata\s*=", r"urlopen\(\s*[^,()]+,\s*[^=,()]+[,)]",
+    r"(?s)Request\(.{0,300}?\bdata\s*=", r"(?s)urlopen\(.{0,300}?\bdata\s*=",
+    r"urlopen\(\s*[^,()]+(\([^()]*\))?,\s*[^=,()]+[,)]", r"Request\(\s*[^,()]+,\s*[^=,()]+[,)]",
+    r"\bhttp\.client\b", r"\bHTTPS?Connection\b",
     r"order_send", r"order_check", r"MetaTrader5", r"\bmt5\.initialize", r"TRADE_ACTION_",
 ]
 
@@ -88,6 +90,8 @@ def _scan_text(path: Path) -> str:
 @pytest.mark.parametrize("snippet", [
     "requests.post(url)", "httpx.put(u)", "session.delete(x)", "HTTPMethod.POST", 'method="PATCH"',
     "urllib.request.Request(url, data=b'x')", "urlopen(url, payload)", "urlopen(build(u), data=b'')",
+    "urllib.request.Request(url, payload)", "urlopen(Request(url), body)", "Request(\n    url,\n    data=b'x')",
+    "conn = http.client.HTTPSConnection(h)",
 ])
 def test_scan_catches_write_requests(snippet):
     assert any(re.search(p, snippet, re.IGNORECASE) for p in FORBIDDEN), snippet

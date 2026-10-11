@@ -1,4 +1,4 @@
-# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.1
+# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.2
 
 *Author: quantitative researcher role. v1 was challenged by the independent reviewer (15 findings). This v2 adopts
 them as recorded in the table at the end. Where a rule could go either way, it leans toward overstating costs and
@@ -86,7 +86,7 @@ losses.*
 7. **Missed session exit (v2.1).** If no bar closed inside the pre-close buffer, for example because the quiet
    minutes before 17:00 New York are missing, the position is closed at the **open of the first bar after the
    closure**: bid_open − slippage for a long, ask_open + slippage for a short. The reason is `held_through_closure`.
-   The gap risk is borne, never avoided.
+   The gap risk is borne, never avoided. A gap through the take-profit still fills at the take-profit (v2.2).
 8. **Entry bar (v2.1).** R4.1 also applies on the entry bar. A stop inside the spread is hit at that bar's open and
    is never filled better than the market.
 
@@ -112,14 +112,18 @@ losses.*
    - **Embargo** ≥ max(1 day, (max_hold_bars + longest indicator lookback) × timeframe).
 2. Bars before a period may be used for indicator warm-up only. No orders are decided or filled before the period start.
 3. A **test-period** run requires an explicit flag and a `hypothesis_id`.
-4. **Reserving the test window (v2.1).** The test window is reserved per data series before any run of the config.
+4. **Reserving the test window (v2.2).** The test window is reserved per **instrument**, across every provider,
+   venue and timeframe. The reservation happens in the same transaction that registers the first experiment
+   declaring it.
    - A window cannot be reserved on data that an earlier non-test run already used.
    - Once reserved, no train or validation run may overlap it.
-5. **One look per hypothesis (v2.1).** A hypothesis gets one *look* at the test set. A look is its configuration
-   without the cost multiplier, so the ×1.5 and ×2 stress runs belong to the same look.
+   - Test runs recorded before reservations existed have their windows back-filled.
+5. **One look per hypothesis (v2.2).** A hypothesis gets one *look* at the test set. A look is its configuration,
+   including the **code version**, without the cost multiplier. Only the ×1.5 and ×2 stress runs belong to the same
+   look, once each; other multipliers are refused on the test set.
    - A different configuration, or an exact repeat, is refused unless overridden, and the override is recorded.
-6. **Prior looks are recorded (v2.1).** Every test run records how many prior looks the window has had, for
-   multiple-testing adjustment.
+6. **Prior looks are recorded (v2.2).** Every test run records how many *other* looks overlapping windows have
+   had, for multiple-testing adjustment.
 
 ## R8 Metrics (net of all costs)
 - **Trade results:** net P&L (account currency and USD), return %, trade count, win rate (win = net > 0),
@@ -189,3 +193,15 @@ For ≥ 20 cut points T (including cuts adjacent to closures):
 | 10 | `code_version` ignored untracked files | Fixed |
 | 11 | Warm-up bars counted in results | Excluded (R1.1) |
 | 12 | Data labels came from the whole series | Taken from the rows actually used |
+
+## Re-check disposition (v2.1 → v2.2, verification of commit 7d897de)
+| # | Finding | Fix |
+|---|---|---|
+| A | The look rule could be dodged through another timeframe or feed, an arbitrary multiplier, or a code change | Reservation per instrument; multipliers {1, 1.5, 2} only; code version part of the look; prior-look count corrected |
+| B | The closure exit ignored the take-profit cap | Gap through the take-profit fills at the take-profit |
+| C | Reservations could be orphaned | Reservation is atomic with registration; refusals are recorded as failed experiments |
+| D | The finding-12 regression test could not fail on the old code | Fixture now includes a second data label |
+| E | Some HTTP body forms evaded the scan | Positional `Request`/`urlopen` bodies, multi-line `data=`, and `http.client` are now caught |
+| 9 | Config-load failures were not recorded | `load_experiment_recorded` |
+| 4 | Pre-v4 test runs had no reservation | Back-filled on open |
+| 2 | Static scan limits | Static scanning can always be dodged by building strings; the behavioural GET-only test is the backstop |

@@ -274,7 +274,13 @@ def run_backtest(
                     # R4.7: the pre-close session exit never fired (quiet minutes missing before the closure).
                     # Exit at the first bar after the closure at its open: the gap risk is borne, never avoided.
                     tr.held_through_gap = True
-                    close_position(i, c.open - slip if long else ask_open + slip, "held_through_closure", slip)
+                    # R4.1 caps still apply: a gap through the take-profit fills AT the take-profit, never beyond.
+                    if long and tr.tp is not None and c.open >= tr.tp:
+                        close_position(i, tr.tp, "tp_gap", 0.0)
+                    elif not long and tr.tp is not None and ask_open <= tr.tp:
+                        close_position(i, tr.tp, "tp_gap", 0.0)
+                    else:
+                        close_position(i, c.open - slip if long else ask_open + slip, "held_through_closure", slip)
                 elif b != prev.close_time:
                     tr.held_through_gap = True  # unexpected data gap held (R4.4)
             if position is not None:

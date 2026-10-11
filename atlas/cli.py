@@ -178,12 +178,12 @@ def _print_metrics(m: dict) -> None:
 
 
 def cmd_backtest(settings, args) -> int:
-    from .backtest.runner import ExperimentError, load_experiment, run_experiment
+    from .backtest.runner import ExperimentError, load_experiment_recorded, run_experiment
     from .research.ledger import LedgerError
 
-    exp = load_experiment(settings.root / args.experiment, settings.root)
     with Store(settings.database_path) as store:
         try:
+            exp = load_experiment_recorded(store, settings.root / args.experiment, settings.root, args.period)
             exp_id, m = run_experiment(store, exp, args.period, cost_multiplier=args.cost_multiplier,
                                        confirm_test=args.confirm_test, allow_repeat_test=args.allow_repeat_test)
         except (ExperimentError, LedgerError) as exc:

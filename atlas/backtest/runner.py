@@ -12,7 +12,7 @@ from pathlib import Path
 from ..brokers.spec import SpecStatus, load_spec
 from ..ingest import system_clock_ms
 from ..models import timeframe_ms
-from ..research.ledger import Ledger, hash_candles, sha256_json
+from ..research.ledger import Ledger, LedgerError, code_version, hash_candles, sha256_json
 from ..research.splits import DAY_MS, Period, Splits, required_embargo_ms
 from ..risk.gate import RiskLimits
 from ..sessions import XauCfd
@@ -108,6 +108,28 @@ def _candles(store: Store, exp: Experiment, period: Period):
     return before + inside
 
 
+def load_experiment_recorded(store: Store, path: str | Path, root: Path, period_name: str) -> Experiment:
+    """load_experiment, but a config that cannot even be loaded is still recorded as a failed experiment."""
+    try:
+        return load_experiment(path, root)
+    except Exception as exc:
+        hypothesis = "unknown"
+        try:
+            with Path(path).open("rb") as fh:
+                hypothesis = tomllib.load(fh).get("hypothesis_id") or "unknown"
+        except Exception:
+            pass
+        ledger = Ledger(store)
+        exp_id, _ = ledger.register(name=str(path), strategy="unknown", hypothesis_id=hypothesis,
+                                    period=period_name if period_name in ("train", "validation", "test") else "full",
+                                    config={"config_path": str(path), "stage": "load"},
+                                    data_selection={"period": period_name}, cost_status="unknown",
+                                    spec_label="unavailable", now_ms=system_clock_ms(), allow_repeat_test=True,
+                                    cost_multiplier=1.0)
+        ledger.fail(exp_id, error=f"load: {type(exc).__name__}: {exc}", now_ms=system_clock_ms())
+        raise ExperimentError(f"experiment config could not be loaded (recorded in the ledger): {exc}") from exc
+
+
 def _register_setup_failure(ledger: Ledger, exp: Experiment, period_name: str, exc: BaseException) -> str:
     """Finding 9: failures before a run starts (bad spec, limits, params, multiplier) are recorded too."""
     exp_id, _ = ledger.register(name=exp.name, strategy=exp.strategy_name, hypothesis_id=exp.hypothesis_id,
@@ -127,9 +149,6 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
     ledger = Ledger(store)
     series = {k: exp.data[k] for k in ("instrument", "provider", "venue", "timeframe")}
     test = exp.splits.get("test")
-    # The test window is reserved before ANY run of this config, so research runs can never touch it later.
-    ledger.reserve_test_window(series, test.start_ms, test.end_ms, hypothesis_id=exp.hypothesis_id,
-                               now_ms=system_clock_ms())
     period = exp.splits.get(period_name)
     try:
         spec = load_spec(exp.spec_path)
@@ -146,16 +165,22 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
     base_config = {
         "strategy_params": strategy.params(), "engine": exp.engine.__dict__, "base_costs": base_costs.as_dict(),
         "risk_limits": limits.__dict__, "spec_sha256": spec.file_sha256, "rules": "docs/13_simulation_rules.md v2.1",
-        "warmup_bars": exp.warmup_bars,
+        "warmup_bars": exp.warmup_bars, "code_version": code_version(),  # a code change = a new look
     }
     selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
     look_key = sha256_json({"config": base_config, "selection": selection, "strategy": strategy.name})
     config = {**base_config, "costs": costs.as_dict(), "cost_multiplier": cost_multiplier}
-    exp_id, _ = ledger.register(name=exp.name + name_suffix, strategy=strategy.name, hypothesis_id=exp.hypothesis_id,
-                                period=period_name, config=config, data_selection=selection,
-                                cost_status=cost_status, spec_label=spec.label, now_ms=system_clock_ms(),
-                                look_key=look_key, cost_multiplier=cost_multiplier,
-                                allow_repeat_test=allow_repeat_test)
+    try:
+        # The config's test window is reserved atomically with this registration, before ANY run of it.
+        exp_id, _ = ledger.register(name=exp.name + name_suffix, strategy=strategy.name,
+                                    hypothesis_id=exp.hypothesis_id, period=period_name, config=config,
+                                    data_selection=selection, cost_status=cost_status, spec_label=spec.label,
+                                    now_ms=system_clock_ms(), look_key=look_key, cost_multiplier=cost_multiplier,
+                                    allow_repeat_test=allow_repeat_test,
+                                    reserve_test_window=(test.start_ms, test.end_ms))
+    except LedgerError as exc:  # refusals (reservation conflict, test-set guard) are recorded too
+        _register_setup_failure(ledger, exp, period_name, exc)
+        raise
     try:
         candles = _candles(store, exp, period)
         result = run_backtest(candles, strategy, spec=spec, limits=limits, costs=costs, calendar=XauCfd(),

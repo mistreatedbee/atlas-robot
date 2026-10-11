@@ -179,34 +179,81 @@ def sel(start, end):
     return {**SERIES, "start_ms": start, "end_ms": end}
 
 
+def reserve(ledger, start, end, hyp="H-test"):
+    """Register a train run that declares (and therefore reserves) a test window."""
+    return register(ledger, period="train", hypothesis_id=hyp, data_selection=sel(0, 10), reserve_test_window=(start, end))
+
+
 def test_finding_5_reserved_test_window_blocks_research_runs_on_it(ledger):
-    ledger.reserve_test_window(SERIES, 100, 200, hypothesis_id="H1", now_ms=1)
-    with pytest.raises(LedgerError, match="reserved test window"):
+    reserve(ledger, 100, 200, hyp="H1")
+    with pytest.raises(LedgerError, match="reserved"):
         register(ledger, period="validation", data_selection=sel(150, 250))   # test dates copied into validation
-    with pytest.raises(LedgerError, match="reserved test window"):
+    with pytest.raises(LedgerError, match="reserved"):
         register(ledger, period="train", hypothesis_id="H-renamed", data_selection=sel(90, 110))
-    register(ledger, period="validation", data_selection=sel(0, 100))          # adjacent, not overlapping: fine
+    register(ledger, period="validation", data_selection=sel(10, 100))         # adjacent, not overlapping: fine
     with pytest.raises(sqlite3.IntegrityError, match="permanent"):
         ledger.conn.execute("DELETE FROM reserved_test_windows")
 
 
+def test_recheck_A_reservation_covers_every_feed_and_timeframe(ledger):
+    reserve(ledger, 100, 200)
+    for other in ({"timeframe": "M1"}, {"provider": "vault_mt5", "venue": "vault_markets"}):
+        with pytest.raises(LedgerError, match="reserved"):
+            register(ledger, period="validation", data_selection={**sel(120, 130), **other})
+
+
 def test_finding_5_cannot_reserve_already_researched_data_as_test(ledger):
     register(ledger, period="validation", data_selection=sel(0, 100))
-    with pytest.raises(LedgerError, match="already used overlapping data"):
-        ledger.reserve_test_window(SERIES, 50, 150, hypothesis_id="H1", now_ms=1)
+    with pytest.raises(LedgerError, match="already used overlapping"):
+        reserve(ledger, 50, 150)
+
+
+def test_recheck_C_refused_reservation_leaves_nothing_behind(ledger):
+    register(ledger, period="validation", data_selection=sel(0, 100))
+    n_exp = ledger.conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
+    with pytest.raises(LedgerError):
+        reserve(ledger, 50, 150)
+    assert ledger.reserved_windows("XAUUSD") == []
+    assert ledger.conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == n_exp
 
 
 def test_finding_5_cost_stress_is_part_of_the_same_test_look(ledger):
-    ledger.reserve_test_window(SERIES, 100, 200, hypothesis_id="H-test", now_ms=1)
+    reserve(ledger, 100, 200)
     register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=1.0)
     register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=1.5)
     register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=2.0)
     with pytest.raises(LedgerError):  # exact repeat
         register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=2.0)
-    with pytest.raises(LedgerError):  # a different configuration = a second look
+    with pytest.raises(LedgerError):  # a different configuration (or code version) = a second look
         register(ledger, period="test", data_selection=sel(100, 200), look_key="L2", cost_multiplier=1.0)
     other, _ = register(ledger, period="test", hypothesis_id="H-other", data_selection=sel(100, 200), look_key="L9")
-    assert json.loads(ledger.get(other)["data_selection_json"])["test_window_prior_looks"] == 1  # counted
+    assert json.loads(ledger.get(other)["data_selection_json"])["test_window_prior_looks"] == 1  # H-test's one look
+
+
+def test_recheck_A_only_standard_stress_multipliers_on_test(ledger):
+    reserve(ledger, 100, 200)
+    with pytest.raises(LedgerError, match="multiplier"):
+        register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=1.0000001)
+
+
+def test_recheck_A_prior_looks_ignore_own_look_and_disjoint_windows(ledger):
+    reserve(ledger, 100, 200)
+    reserve(ledger, 300, 400, hyp="H-far")
+    register(ledger, period="test", hypothesis_id="H-far", data_selection=sel(300, 400), look_key="F")
+    register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=1.0)
+    stress, _ = register(ledger, period="test", data_selection=sel(100, 200), look_key="L1", cost_multiplier=1.5)
+    assert json.loads(ledger.get(stress)["data_selection_json"])["test_window_prior_looks"] == 0
+
+
+def test_recheck_legacy_test_runs_get_windows_backfilled():
+    s = Store(":memory:")
+    led = Ledger(s)
+    register(led, period="test", data_selection=sel(100, 200), look_key="L")  # like a pre-v4 run: no reservation
+    assert led.reserved_windows("XAUUSD") == []
+    led2 = Ledger(s)  # re-opening backfills from existing test runs
+    assert [(w["start_ms"], w["end_ms"]) for w in led2.reserved_windows("XAUUSD")] == [(100, 200)]
+    with pytest.raises(LedgerError, match="reserved"):
+        register(led2, period="validation", data_selection=sel(150, 160))
 
 
 def test_finding_10_code_version_flags_untracked_files(tmp_path):

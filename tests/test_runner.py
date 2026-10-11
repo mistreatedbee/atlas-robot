@@ -127,5 +127,26 @@ def test_finding_9_setup_failures_are_recorded(store, tmp_path):
 
 
 def test_finding_12_data_labels_are_those_of_the_data_used(store):
+    # a row with ANOTHER label exists for the same instrument/provider/timeframe but outside the train data
+    from atlas.models import DataLabel, ValidationStatus
+    from .conftest import make_candle
+    from atlas.models import PriceBasis
+    run_id = store.start_run(instrument_id="XAUUSD", provider="sample_synthetic", venue="other_venue", timeframe="M5",
+                             source_symbol="XAUUSD", data_label=DataLabel.USER_FILE, start_ms=0, end_ms=1, now_ms=0)
+    c = make_candle(utc_ms(2026, 8, 4, 10), tf="M5", instrument_id="XAUUSD", provider="sample_synthetic",
+                    venue="other_venue", price_basis=PriceBasis.BID)
+    store.commit_chunk(run_id=run_id, data_label=DataLabel.USER_FILE, candles=[(c, ValidationStatus.VALID, [])],
+                       rejects=[], checkpoint_ms=1, now_ms=0, extra_counts={})
+    assert store.data_labels("XAUUSD", "sample_synthetic", "M5") == {"synthetic_sample", "user_file"}  # old query
     exp_id, m = run_experiment(store, exp("baseline_no_trade_sample"), "train")
     assert m["data_labels"] == ["synthetic_sample"]
+
+
+def test_recheck_unloadable_config_is_recorded(store, tmp_path):
+    from atlas.backtest.runner import load_experiment_recorded
+    bad = tmp_path / "broken.toml"
+    bad.write_text('hypothesis_id = "H-broken"\nname = "x"\n')  # missing everything else
+    with pytest.raises(ExperimentError, match="could not be loaded"):
+        load_experiment_recorded(store, bad, ROOT, "validation")
+    rec = Ledger(store).list(1)[0]
+    assert rec["status"] == "failed" and rec["hypothesis_id"] == "H-broken" and rec["error"].startswith("load:")
