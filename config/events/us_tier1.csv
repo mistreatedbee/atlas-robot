@@ -1,0 +1,116 @@
+event_id,category,tier,reference,release_ny,release_utc_ms,known_since_utc_ms,source,notes
+FOMC-2024-01,FOMC,1,2024-01,2024-01-31 14:00,1706727600000,1706641200000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2024-01,NFP,1,2024-01,2024-02-02 08:30,1706880600000,1706794200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-01,CPI,1,2024-01,2024-02-13 08:30,1707831000000,1707744600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2024-02,NFP,1,2024-02,2024-03-08 08:30,1709904600000,1709818200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-02,CPI,1,2024-02,2024-03-12 08:30,1710246600000,1710160200000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-03,FOMC,1,2024-03,2024-03-20 14:00,1710957600000,1710871200000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2024-03,NFP,1,2024-03,2024-04-05 08:30,1712320200000,1712233800000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-03,CPI,1,2024-03,2024-04-10 08:30,1712752200000,1712665800000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-05,FOMC,1,2024-05,2024-05-01 14:00,1714586400000,1714500000000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2024-04,NFP,1,2024-04,2024-05-03 08:30,1714739400000,1714653000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-04,CPI,1,2024-04,2024-05-15 08:30,1715776200000,1715689800000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2024-05,NFP,1,2024-05,2024-06-07 08:30,1717763400000,1717677000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-05,CPI,1,2024-05,2024-06-12 08:30,1718195400000,1718109000000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-06,FOMC,1,2024-06,2024-06-12 14:00,1718215200000,1718128800000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2024-06,NFP,1,2024-06,2024-07-05 08:30,1720182600000,1720096200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-06,CPI,1,2024-06,2024-07-11 08:30,1720701000000,1720614600000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-07,FOMC,1,2024-07,2024-07-31 14:00,1722448800000,1722362400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2024-07,NFP,1,2024-07,2024-08-02 08:30,1722601800000,1722515400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-07,CPI,1,2024-07,2024-08-14 08:30,1723638600000,1723552200000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2024-08,NFP,1,2024-08,2024-09-06 08:30,1725625800000,1725539400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-08,CPI,1,2024-08,2024-09-11 08:30,1726057800000,1725971400000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-09,FOMC,1,2024-09,2024-09-18 14:00,1726682400000,1726596000000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2024-09,NFP,1,2024-09,2024-10-04 08:30,1728045000000,1727958600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-09,CPI,1,2024-09,2024-10-10 08:30,1728563400000,1728477000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2024-10,NFP,1,2024-10,2024-11-01 08:30,1730464200000,1730377800000,https://www.bls.gov/bls/news-release/empsit.htm,
+FOMC-2024-11,FOMC,1,2024-11,2024-11-07 14:00,1731006000000,1730919600000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+CPI-2024-10,CPI,1,2024-10,2024-11-13 08:30,1731504600000,1731418200000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2024-11,NFP,1,2024-11,2024-12-06 08:30,1733491800000,1733405400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-11,CPI,1,2024-11,2024-12-11 08:30,1733923800000,1733837400000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2024-12,FOMC,1,2024-12,2024-12-18 14:00,1734548400000,1734462000000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2024-12,NFP,1,2024-12,2025-01-10 08:30,1736515800000,1736429400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2024-12,CPI,1,2024-12,2025-01-15 08:30,1736947800000,1736861400000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-01,FOMC,1,2025-01,2025-01-29 14:00,1738177200000,1738090800000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2025-01,NFP,1,2025-01,2025-02-07 08:30,1738935000000,1738848600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-01,CPI,1,2025-01,2025-02-12 08:30,1739367000000,1739280600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2025-02,NFP,1,2025-02,2025-03-07 08:30,1741354200000,1741267800000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-02,CPI,1,2025-02,2025-03-12 08:30,1741782600000,1741696200000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-03,FOMC,1,2025-03,2025-03-19 14:00,1742407200000,1742320800000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2025-03,NFP,1,2025-03,2025-04-04 08:30,1743769800000,1743683400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-03,CPI,1,2025-03,2025-04-10 08:30,1744288200000,1744201800000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2025-04,NFP,1,2025-04,2025-05-02 08:30,1746189000000,1746102600000,https://www.bls.gov/bls/news-release/empsit.htm,
+FOMC-2025-05,FOMC,1,2025-05,2025-05-07 14:00,1746640800000,1746554400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+CPI-2025-04,CPI,1,2025-04,2025-05-13 08:30,1747139400000,1747053000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2025-05,NFP,1,2025-05,2025-06-06 08:30,1749213000000,1749126600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-05,CPI,1,2025-05,2025-06-11 08:30,1749645000000,1749558600000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-06,FOMC,1,2025-06,2025-06-18 14:00,1750269600000,1750183200000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2025-06,NFP,1,2025-06,2025-07-03 08:30,1751545800000,1751459400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-06,CPI,1,2025-06,2025-07-15 08:30,1752582600000,1752496200000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-07,FOMC,1,2025-07,2025-07-30 14:00,1753898400000,1753812000000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2025-07,NFP,1,2025-07,2025-08-01 08:30,1754051400000,1753965000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-07,CPI,1,2025-07,2025-08-12 08:30,1755001800000,1754915400000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2025-08,NFP,1,2025-08,2025-09-05 08:30,1757075400000,1756989000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-08,CPI,1,2025-08,2025-09-11 08:30,1757593800000,1757507400000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-09,FOMC,1,2025-09,2025-09-17 14:00,1758132000000,1758045600000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET verified
+CPI-2025-09,CPI,1,2025-09,2025-10-24 08:30,1761309000000,1761222600000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2025-10,FOMC,1,2025-10,2025-10-29 14:00,1761760800000,1761674400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2025-09,NFP,1,2025-09,2025-11-20 08:30,1763645400000,1763559000000,https://www.bls.gov/bls/news-release/empsit.htm,
+FOMC-2025-12,FOMC,1,2025-12,2025-12-10 14:00,1765393200000,1765306800000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2025-11,NFP,1,2025-11,2025-12-16 08:30,1765891800000,1765805400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-11,CPI,1,2025-11,2025-12-18 08:30,1766064600000,1765978200000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2025-12,NFP,1,2025-12,2026-01-09 08:30,1767965400000,1767879000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2025-12,CPI,1,2025-12,2026-01-13 08:30,1768311000000,1768224600000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-01,FOMC,1,2026-01,2026-01-28 14:00,1769626800000,1769540400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2026-01,NFP,1,2026-01,2026-02-11 08:30,1770816600000,1770730200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-01,CPI,1,2026-01,2026-02-13 08:30,1770989400000,1770903000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2026-02,NFP,1,2026-02,2026-03-06 08:30,1772803800000,1772717400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-02,CPI,1,2026-02,2026-03-11 08:30,1773232200000,1773145800000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-03,FOMC,1,2026-03,2026-03-18 14:00,1773856800000,1773770400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2026-03,NFP,1,2026-03,2026-04-03 08:30,1775219400000,1775133000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-03,CPI,1,2026-03,2026-04-10 08:30,1775824200000,1775737800000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-04,FOMC,1,2026-04,2026-04-29 14:00,1777485600000,1777399200000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2026-04,NFP,1,2026-04,2026-05-08 08:30,1778243400000,1778157000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-04,CPI,1,2026-04,2026-05-12 08:30,1778589000000,1778502600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2026-05,NFP,1,2026-05,2026-06-05 08:30,1780662600000,1780576200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-05,CPI,1,2026-05,2026-06-10 08:30,1781094600000,1781008200000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-06,FOMC,1,2026-06,2026-06-17 14:00,1781719200000,1781632800000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2026-06,NFP,1,2026-06,2026-07-02 08:30,1782995400000,1782909000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-06,CPI,1,2026-06,2026-07-14 08:30,1784032200000,1783945800000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-07,FOMC,1,2026-07,2026-07-29 14:00,1785348000000,1785261600000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2026-07,NFP,1,2026-07,2026-08-07 08:30,1786105800000,1786019400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-07,CPI,1,2026-07,2026-08-12 08:30,1786537800000,1786451400000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2026-08,NFP,1,2026-08,2026-09-04 08:30,1788525000000,1788438600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-08,CPI,1,2026-08,2026-09-11 08:30,1789129800000,1789043400000,https://www.bls.gov/bls/news-release/cpi.htm,
+FOMC-2026-09,FOMC,1,2026-09,2026-09-16 14:00,1789581600000,1789495200000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+NFP-2026-09,NFP,1,2026-09,2026-10-02 08:30,1790944200000,1790857800000,https://www.bls.gov/bls/news-release/empsit.htm,
+FOMC-2026-10,FOMC,1,2026-10,2026-10-28 14:00,1793210400000,1793124000000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,14:00 ET assumed (standard)
+NFP-2026-10,NFP,1,2026-10,2026-11-06 08:30,1793971800000,1793885400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-10,CPI,1,2026-10,2026-11-10 08:30,1794317400000,1794231000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2026-11,NFP,1,2026-11,2026-12-04 08:30,1796391000000,1796304600000,https://www.bls.gov/bls/news-release/empsit.htm,
+FOMC-2026-12,FOMC,1,2026-12,2026-12-09 14:00,1796842800000,1796756400000,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm,SEP meeting; 14:00 ET assumed (standard)
+CPI-2026-11,CPI,1,2026-11,2026-12-10 08:30,1796909400000,1796823000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2026-12,NFP,1,2026-12,2027-01-08 08:30,1799415000000,1799328600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2026-12,CPI,1,2026-12,2027-01-13 08:30,1799847000000,1799760600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-01,NFP,1,2027-01,2027-02-05 08:30,1801834200000,1801747800000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-01,CPI,1,2027-01,2027-02-11 08:30,1802352600000,1802266200000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-02,NFP,1,2027-02,2027-03-05 08:30,1804253400000,1804167000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-02,CPI,1,2027-02,2027-03-10 08:30,1804685400000,1804599000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-03,NFP,1,2027-03,2027-04-02 08:30,1806669000000,1806582600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-03,CPI,1,2027-03,2027-04-13 08:30,1807619400000,1807533000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-04,NFP,1,2027-04,2027-05-07 08:30,1809693000000,1809606600000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-04,CPI,1,2027-04,2027-05-12 08:30,1810125000000,1810038600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-05,NFP,1,2027-05,2027-06-04 08:30,1812112200000,1812025800000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-05,CPI,1,2027-05,2027-06-10 08:30,1812630600000,1812544200000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-06,NFP,1,2027-06,2027-07-02 08:30,1814531400000,1814445000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-06,CPI,1,2027-06,2027-07-14 08:30,1815568200000,1815481800000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-07,NFP,1,2027-07,2027-08-06 08:30,1817555400000,1817469000000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-07,CPI,1,2027-07,2027-08-11 08:30,1817987400000,1817901000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-08,NFP,1,2027-08,2027-09-03 08:30,1819974600000,1819888200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-08,CPI,1,2027-08,2027-09-14 08:30,1820925000000,1820838600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-09,NFP,1,2027-09,2027-10-08 08:30,1822998600000,1822912200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-09,CPI,1,2027-09,2027-10-14 08:30,1823517000000,1823430600000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-10,NFP,1,2027-10,2027-11-05 08:30,1825417800000,1825331400000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-10,CPI,1,2027-10,2027-11-10 08:30,1825853400000,1825767000000,https://www.bls.gov/bls/news-release/cpi.htm,
+NFP-2027-11,NFP,1,2027-11,2027-12-03 08:30,1827840600000,1827754200000,https://www.bls.gov/bls/news-release/empsit.htm,
+CPI-2027-11,CPI,1,2027-11,2027-12-10 08:30,1828445400000,1828359000000,https://www.bls.gov/bls/news-release/cpi.htm,
