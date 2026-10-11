@@ -234,6 +234,22 @@ def cmd_health(settings, args) -> int:
     return rep.exit_code
 
 
+def cmd_fx_update(settings, args) -> int:
+    from datetime import date, datetime, timezone
+
+    from .fx import ECB_HOST, fetch_usdzar, store_rates
+    from .http import ReadOnlyHttpClient
+
+    http = ReadOnlyHttpClient({ECB_HOST}, min_interval_s=1.0)
+    end = date.fromisoformat(args.end) if args.end else datetime.now(timezone.utc).date()
+    rows = fetch_usdzar(http, date.fromisoformat(args.start), end)
+    with Store(settings.database_path) as store:
+        n = store_rates(store, "USDZAR", rows, system_clock_ms())
+    print(f"USDZAR: fetched {len(rows)} ECB reference days, inserted {n} new"
+          + (f"; latest {rows[-1][0]} = {rows[-1][1]:.4f}" if rows else ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -296,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--max-data-age-minutes", type=float, help="staleness threshold in trading minutes (real data only)")
     hl.add_argument("--kill-switch", default="data/KILL_SWITCH")
 
+    fx = sub.add_parser("fx-update", help="fetch daily USD/ZAR from ECB reference rates (no credentials)")
+    fx.add_argument("--start", required=True)
+    fx.add_argument("--end")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -303,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
-            "backtest": cmd_backtest, "health": cmd_health, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:
