@@ -20,7 +20,7 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
@@ -221,6 +221,51 @@ CREATE TABLE IF NOT EXISTS reserved_test_windows (
 );
 CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_delete BEFORE DELETE ON reserved_test_windows
 BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
+-- ---- Paper execution (simulated; there is no live executor) -------------------------------------------
+-- One row per client order id: the PRIMARY KEY is the duplicate-order guard, and it survives restarts.
+CREATE TABLE IF NOT EXISTS order_journal (
+    client_order_id TEXT PRIMARY KEY,
+    venue           TEXT NOT NULL CHECK (venue IN ('paper')),
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL CHECK (side IN ('buy','sell')),
+    volume          REAL NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('submitted','filled','rejected')),
+    order_json      TEXT NOT NULL,
+    reason          TEXT,
+    fill_price      REAL,
+    position_id     TEXT,
+    created_ms      INTEGER NOT NULL,
+    updated_ms      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paper_positions (
+    position_id     TEXT PRIMARY KEY,
+    client_order_id TEXT NOT NULL UNIQUE REFERENCES order_journal(client_order_id),
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    volume          REAL NOT NULL,
+    entry_price     REAL NOT NULL,
+    sl              REAL NOT NULL,
+    tp              REAL,
+    opened_ms       INTEGER NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('open','closed')),
+    exit_price      REAL,
+    exit_reason     TEXT,
+    closed_ms       INTEGER,
+    gross_usd       REAL
+);
+CREATE TABLE IF NOT EXISTS paper_events (
+    event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    time_ms    INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    detail     TEXT
+);
+CREATE TRIGGER IF NOT EXISTS paper_events_no_update BEFORE UPDATE ON paper_events
+BEGIN SELECT RAISE(ABORT, 'paper event log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS paper_events_no_delete BEFORE DELETE ON paper_events
+BEGIN SELECT RAISE(ABORT, 'paper event log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS order_journal_no_delete BEFORE DELETE ON order_journal
+BEGIN SELECT RAISE(ABORT, 'order journal rows are permanent'); END;
+
 CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_update BEFORE UPDATE ON reserved_test_windows
 BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
 CREATE TRIGGER IF NOT EXISTS experiment_trades_no_delete BEFORE DELETE ON experiment_trades
@@ -277,6 +322,7 @@ class Store:
         3: (),  # v3 only adds the experiment-ledger tables, created by the idempotent DDL below
         4: (("experiments", "look_key", "TEXT"), ("experiments", "cost_multiplier", "REAL"),
             "DROP TRIGGER IF EXISTS experiments_config_immutable"),  # recreated below with more frozen columns
+        5: (),  # v5 adds the paper-execution tables (order journal, positions, fills), created by the DDL below
     }
 
     def _columns(self, table: str) -> set[str]:
