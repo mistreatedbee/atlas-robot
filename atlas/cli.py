@@ -413,6 +413,28 @@ def cmd_supervise(settings, args) -> int:
     return 0 if res.stopped_by != "max_crashes" else 2
 
 
+def cmd_hypothesis(settings, args) -> int:
+    from .research.hypotheses import HypothesisError, register, trials_used
+
+    with Store(settings.database_path) as store:
+        if args.action == "register":
+            try:
+                h, new = register(store, settings.root / args.file, now_ms=system_clock_ms())
+            except HypothesisError as exc:
+                print(f"refused: {exc}", file=sys.stderr)
+                return 2
+            print(f"{h.hypothesis_id}: {'registered' if new else 'already registered (identical)'} "
+                  f"sha256 {h.sha256[:12]}; trial budget {h.max_trials}")
+        else:
+            for r in store.conn.execute("SELECT hypothesis_id, strategy, registered_at_ms, spec_json, supersedes "
+                                        "FROM hypotheses ORDER BY hypothesis_id"):
+                spec = json.loads(r["spec_json"])
+                used = len(trials_used(store, r["hypothesis_id"]))
+                print(f"{r['hypothesis_id']}  {spec['family']:<9} {r['strategy']:<15} registered {fmt_ms(r['registered_at_ms'])}"
+                      f"  trials {used}/{spec['max_trials']}" + (f"  supersedes {r['supersedes']}" if r["supersedes"] else ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -518,6 +540,10 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--stop-file", default="data/STOP_ATLAS")
     sv.add_argument("--max-crashes", type=int, default=5)
 
+    hy = sub.add_parser("hypothesis", help="pre-register strategy hypotheses (immutable) / list them")
+    hy.add_argument("action", choices=["register", "list"])
+    hy.add_argument("--file", help="hypotheses/*.toml (for register)")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -527,7 +553,7 @@ COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cm
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
             "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check,
             "paper-run": cmd_paper_run, "import-ticks": cmd_import_ticks, "spread-profile": cmd_spread_profile,
-            "supervise": cmd_supervise, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "supervise": cmd_supervise, "hypothesis": cmd_hypothesis, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:

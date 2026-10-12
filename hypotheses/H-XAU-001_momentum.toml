@@ -1,0 +1,23 @@
+# PRE-REGISTERED 2026-10-12, before any evaluation on real data. Never edit after registration:
+# register a new id with `supersedes = "H-XAU-001"` instead.
+hypothesis_id = "H-XAU-001"
+family = "momentum"
+strategy = "gold_momentum"
+statement = "On XAUUSD M5, a fresh EMA(fast)/EMA(slow) cross confirmed by ADX(14) >= adx_min is followed by continuation large enough to beat costs."
+execution_tf = "M5"
+entry_rules = ["at a bar close where EMA(fast) crosses EMA(slow) (state change vs previous bar, same data segment)", "ADX(14) >= adx_min at that close", "buy on an up-cross, sell on a down-cross; market order at the next bar (docs/13)"]
+exit_rules = ["stop = stop_atr x ATR(14), take-profit = tp_atr x ATR(14), from the entry quote", "flat before scheduled closures and tier-1 US releases (docs/13 R4.3, R4.9)"]
+stop = "stop_atr x ATR(14) at the decision bar"
+invalidation = ["out-of-sample expectancy <= 0 R after costs", "fails at 2x cost stress", "does not beat the matched random baseline (percentile below threshold)"]
+no_trade_conditions = ["reopen window", "pre-close buffer", "+-15 min around CPI/NFP/FOMC", "risk gate rejection (including minimum volume vs 1% risk)"]
+baseline = "matched random entry (R9.2, same stop/TP rules) and no-trade"
+cost_model = "Vault spread measured by `atlas spread-profile` (p90); slippage provisional until demo fills are measured"
+max_trials = 24
+success_criteria = { min_oos_trades = 200, net_expectancy_r_gt = 0.0, profit_factor_gt = 1.1, survives_cost_x = 2.0, beats_random_percentile = 0.95 }
+
+[parameters]
+fast = [10, 20]
+slow = [50, 100]
+adx_min = [20, 25]
+stop_atr = [1.5, 2.0]
+tp_atr = [2.0, 3.0]

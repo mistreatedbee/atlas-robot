@@ -97,6 +97,7 @@ class _Immediate:
 
 
 SERIES_KEYS = ("instrument", "provider", "venue", "timeframe")
+SYNTHETIC = "synthetic"  # reservations/experiments on generated data form their own class (see _window_class)
 STRESS_MULTIPLIERS = (1.0, 1.5, 2.0)  # the only cost multipliers allowed on the test set (docs/13 R5.4)
 ANY = "*"
 
@@ -114,12 +115,20 @@ class Ledger:
     def _test_experiments(self) -> list[dict]:
         out = []
         for r in self.conn.execute("SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier, status, "
-                                   "created_at_utc, data_selection_json FROM experiments"):
+                                   "created_at_utc, data_label, data_selection_json FROM experiments"):
             sel = json.loads(r["data_selection_json"])
             if "instrument" in sel and "start_ms" in sel:
+                synthetic = (sel.get("data_class") == SYNTHETIC or r["data_label"] == "synthetic_sample"
+                             or sel.get("provider") == "sample_synthetic")
                 out.append({**dict(r), "instrument": sel["instrument"], "start_ms": sel["start_ms"],
-                            "end_ms": sel["end_ms"]})
+                            "end_ms": sel["end_ms"], "data_class": SYNTHETIC if synthetic else "real"})
         return out
+
+    @staticmethod
+    def _window_class(row) -> str:
+        """Windows reserved from experiments on synthetic data bind only synthetic research; everything else
+        (including legacy per-series rows) binds real-market research - conservative by default."""
+        return SYNTHETIC if row["provider"] in (SYNTHETIC, "sample_synthetic") else "real"
 
     def _backfill_reservations(self) -> None:
         """Test runs recorded before reservations existed (schema < 4) get their windows reserved retroactively."""
@@ -134,25 +143,30 @@ class Ledger:
             return  # nothing to back-fill: opening the ledger does not write
         with _Immediate(self.conn):
             for r in rows:
+                marker = SYNTHETIC if r["data_class"] == SYNTHETIC else ANY
                 self.conn.execute("INSERT OR IGNORE INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
-                                  (r["instrument"], ANY, ANY, ANY, r["start_ms"], r["end_ms"], r["hypothesis_id"],
+                                  (r["instrument"], marker, ANY, ANY, r["start_ms"], r["end_ms"], r["hypothesis_id"],
                                    r["created_at_utc"]))
 
-    def reserved_windows(self, instrument: str) -> list:
-        return self.conn.execute("SELECT * FROM reserved_test_windows WHERE instrument_id=?", (instrument,)).fetchall()
+    def reserved_windows(self, instrument: str, data_class: str = "real") -> list:
+        rows = self.conn.execute("SELECT * FROM reserved_test_windows WHERE instrument_id=?", (instrument,)).fetchall()
+        return [w for w in rows if self._window_class(w) == data_class]
 
-    def _reserve_in_txn(self, instrument: str, start_ms: int, end_ms: int, hypothesis_id: str, now_ms: int) -> None:
+    def _reserve_in_txn(self, instrument: str, start_ms: int, end_ms: int, hypothesis_id: str, now_ms: int,
+                        data_class: str = "real") -> None:
         """Must be called inside the transaction that registers the experiment declaring the window."""
-        if any(w["start_ms"] == start_ms and w["end_ms"] == end_ms for w in self.reserved_windows(instrument)):
+        if any(w["start_ms"] == start_ms and w["end_ms"] == end_ms
+               for w in self.reserved_windows(instrument, data_class)):
             return
         used = [r for r in self._test_experiments() if r["instrument"] == instrument and r["period"] != "test"
-                and r["start_ms"] < end_ms and start_ms < r["end_ms"]]
+                and r["data_class"] == data_class and r["start_ms"] < end_ms and start_ms < r["end_ms"]]
         if used:
             raise LedgerError(
                 f"cannot reserve test window: {len(used)} earlier non-test experiment(s) already used overlapping "
                 f"{instrument} data (e.g. {used[0]['experiment_id'][:8]}); a test set must be data nobody has looked at")
         self.conn.execute("INSERT INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
-                          (instrument, ANY, ANY, ANY, start_ms, end_ms, hypothesis_id, now_ms))
+                          (instrument, SYNTHETIC if data_class == SYNTHETIC else ANY, ANY, ANY, start_ms, end_ms,
+                           hypothesis_id, now_ms))
 
     def test_runs(self, hypothesis_id: str) -> int:
         """Registered test-period runs of a hypothesis (failure records are stored as 'full' and never count)."""
@@ -177,16 +191,17 @@ class Ledger:
         look_key = look_key or config_sha
         instrument = data_selection.get("instrument")
         has_range = instrument is not None and "start_ms" in data_selection
+        data_class = SYNTHETIC if data_selection.get("data_class") == SYNTHETIC else "real"
         exp_id = str(uuid.uuid4())
         with _Immediate(self.conn):  # one locked transaction: reservation + checks + insert
             if reserve_test_window is not None:
                 if instrument is None:
                     raise LedgerError("a test window can only be reserved for a known instrument")
-                self._reserve_in_txn(instrument, *reserve_test_window, hypothesis_id, now_ms)
+                self._reserve_in_txn(instrument, *reserve_test_window, hypothesis_id, now_ms, data_class)
             override = 0
             if has_range and period != "test":
                 start, end = data_selection["start_ms"], data_selection["end_ms"]
-                for w in self.reserved_windows(instrument):
+                for w in self.reserved_windows(instrument, data_class):
                     if start < w["end_ms"] and w["start_ms"] < end:
                         raise LedgerError(
                             f"{period} period overlaps a reserved {instrument} test window "
@@ -198,7 +213,8 @@ class Ledger:
                 if has_range:
                     s0, e0 = data_selection["start_ms"], data_selection["end_ms"]
                     prior = [r for r in self._test_experiments() if r["period"] == "test"
-                             and r["instrument"] == instrument and r["start_ms"] < e0 and s0 < r["end_ms"]]
+                             and r["instrument"] == instrument and r["data_class"] == data_class
+                             and r["start_ms"] < e0 and s0 < r["end_ms"]]
                 else:  # no range information: fall back to all test runs (never to "no prior runs")
                     prior = [dict(r) for r in self.conn.execute(
                         "SELECT experiment_id, period, hypothesis_id, look_key, cost_multiplier FROM experiments "

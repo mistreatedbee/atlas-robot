@@ -23,9 +23,11 @@ from ..events import EventCalendar
 from ..fx import FxSeries
 from .engine import EngineConfig, NewsRules, run_backtest
 from .metrics import compute_metrics
+from ..research.hypotheses import check_experiment
+from ..strategies.gold import GOLD_STRATEGIES
 from .strategies import NoTrade, RandomEntry, SessionLong, matched_hourly_probabilities
 
-STRATEGIES = {"no_trade": NoTrade, "random_entry": RandomEntry, "session_long": SessionLong}
+STRATEGIES = {"no_trade": NoTrade, "random_entry": RandomEntry, "session_long": SessionLong, **GOLD_STRATEGIES}
 
 
 class ExperimentError(ValueError):
@@ -185,6 +187,8 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
         base_costs.validate(spec.symbol.tick_size or 0.0)
         costs = base_costs.scaled(cost_multiplier) if cost_multiplier != 1.0 else base_costs
         strategy = strategy_override or build_strategy(exp.strategy_name, exp.strategy_params)
+        # pre-registration: registered hypothesis, strategy and grid match, trial budget (baselines exempt)
+        check_experiment(store, exp.hypothesis_id, strategy.name, strategy.params())
         extras, extras_provenance = engine_extras(store, exp)
     except Exception as exc:
         _register_setup_failure(ledger, exp, period_name, exc, cost_multiplier)
@@ -197,7 +201,12 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
         "warmup_bars": exp.warmup_bars, "code_fingerprint": code_fingerprint(),  # a code change = a new look
         **extras_provenance,
     }
-    selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
+    # data class: research on generated (synthetic) prices neither contaminates nor reserves real-market test data
+    labels = store.data_labels_in(series["instrument"], series["provider"], series["venue"], series["timeframe"],
+                                  min(period.start_ms, test.start_ms), max(period.end_ms, test.end_ms))
+    data_class = "synthetic" if labels == {"synthetic_sample"} else "real"
+    selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms,
+                 "data_class": data_class}
     look_key = sha256_json({"config": base_config, "selection": selection, "strategy": strategy.name})
     config = {**base_config, "costs": costs.as_dict(), "cost_multiplier": cost_multiplier}
     try:

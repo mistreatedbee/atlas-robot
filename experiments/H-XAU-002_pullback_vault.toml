@@ -1,0 +1,50 @@
+# Hypothesis H-XAU-002 on REAL Vault Markets data (provider vault_mt5). Will not run until Vault exports are imported.
+# Periods are PLACEHOLDERS: set them from the actual history depth before the first run (one test-set look only).
+name = "H-XAU-002 pullback on Vault M5"
+hypothesis_id = "H-XAU-002"
+spec = "config/brokers/PROVISIONAL_dev_xauusd.toml"   # replace with the verified Vault spec (atlas mt5-check --write-spec)
+risk_limits = "config/risk.toml"
+
+[data]
+instrument = "XAUUSD"
+provider = "vault_mt5"
+venue = "vault_markets"
+timeframe = "M5"
+
+[periods]
+train = ["2025-01-01", "2025-12-01"]
+validation = ["2025-12-05", "2026-05-01"]
+test = ["2026-05-05", "2026-10-01"]
+embargo_days = 3
+
+[strategy]
+name = "gold_pullback"
+params = { trend_ema = 100, slope_bars = 12, rsi_pullback = 40, stop_atr = 2.0, tp_atr = 3.0 }
+
+[engine]
+initial_equity = 500.0
+latency_bars = 0
+max_fill_wait_minutes = 5
+pre_close_buffer_minutes = 5
+max_hold_bars = 0
+longest_lookback_bars = 120
+
+[costs]
+base_spread_usd = 0.30        # PROVISIONAL: replace with `atlas spread-profile` p90 from Vault ticks
+reopen_spread_usd = 0.80
+reopen_minutes = 15
+slippage_usd = 0.10
+usd_to_account = 16.5
+status = "provisional_dev"
+sources = ["provisional until Vault ticks are measured"]
+
+[news]
+enabled = true
+calendar = "config/events/us_tier1.csv"
+before_minutes = 15
+after_minutes = 15
+slippage_multiplier = 3.0
+flat_before = true
+
+[fx]
+source = "ecb_series"

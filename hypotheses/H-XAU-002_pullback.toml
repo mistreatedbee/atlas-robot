@@ -1,0 +1,22 @@
+# PRE-REGISTERED 2026-10-12, before any evaluation on real data. Never edit after registration.
+hypothesis_id = "H-XAU-002"
+family = "pullback"
+strategy = "gold_pullback"
+statement = "On XAUUSD M5, in an established trend (close beyond a sloping EMA(trend_ema)), an RSI(14) recovery through rsi_pullback (or 100 - rsi_pullback for shorts) marks the end of a pullback and precedes continuation that beats costs."
+execution_tf = "M5"
+entry_rules = ["uptrend: EMA(trend_ema) now > EMA slope_bars ago and close > EMA; RSI(14) crosses up through rsi_pullback -> buy", "downtrend mirror image with 100 - rsi_pullback -> sell"]
+exit_rules = ["stop = stop_atr x ATR(14), take-profit = tp_atr x ATR(14), from the entry quote", "flat before scheduled closures and tier-1 US releases"]
+stop = "stop_atr x ATR(14) at the decision bar"
+invalidation = ["out-of-sample expectancy <= 0 R after costs", "fails at 2x cost stress", "does not beat the matched random baseline"]
+no_trade_conditions = ["reopen window", "pre-close buffer", "+-15 min around CPI/NFP/FOMC", "risk gate rejection"]
+baseline = "matched random entry (R9.2) and no-trade"
+cost_model = "Vault spread measured by `atlas spread-profile` (p90); slippage provisional until measured"
+max_trials = 24
+success_criteria = { min_oos_trades = 200, net_expectancy_r_gt = 0.0, profit_factor_gt = 1.1, survives_cost_x = 2.0, beats_random_percentile = 0.95 }
+
+[parameters]
+trend_ema = [50, 100]
+slope_bars = [12]
+rsi_pullback = [35, 40]
+stop_atr = [1.5, 2.0]
+tp_atr = [2.0, 3.0]

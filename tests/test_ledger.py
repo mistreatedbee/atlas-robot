@@ -307,3 +307,16 @@ def test_recheck2_3_register_takes_the_write_lock_before_checking(tmp_path):
     register(lb, period="train", data_selection=sel(150, 160))
     a.close()
     b.close()
+
+
+def test_synthetic_research_neither_contaminates_nor_reserves_real_test_data(ledger):
+    synth = {**SERIES, "provider": "sample_synthetic", "data_class": "synthetic"}
+    # synthetic research and a synthetic test window over the same dates
+    register(ledger, period="validation", data_selection={**synth, "start_ms": 100, "end_ms": 200})
+    register(ledger, period="train", data_selection={**synth, "start_ms": 0, "end_ms": 10},
+             reserve_test_window=(300, 400))
+    # a REAL test window over the same dates can still be reserved, and real research is not blocked by synthetic
+    register(ledger, period="train", hypothesis_id="H-real", data_selection=sel(0, 50), reserve_test_window=(100, 400))
+    with pytest.raises(LedgerError, match="reserved"):
+        register(ledger, period="validation", hypothesis_id="H-real", data_selection=sel(150, 160))
+    register(ledger, period="validation", data_selection={**synth, "start_ms": 150, "end_ms": 160})  # synthetic ok

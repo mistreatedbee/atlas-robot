@@ -1,0 +1,21 @@
+# PRE-REGISTERED 2026-10-12, before any evaluation on real data. Never edit after registration.
+hypothesis_id = "H-XAU-004"
+family = "breakout"
+strategy = "gold_breakout"
+statement = "On XAUUSD M5, a close beyond the prior lookback-bar high/low while ATR(14) >= atr_expansion x its trailing median continues far enough to beat costs."
+execution_tf = "M5"
+entry_rules = ["close > highest high of the previous `lookback` bars (same segment) -> buy; close < lowest low -> sell", "only when ATR(14) >= atr_expansion x median ATR(14) over the same previous bars"]
+exit_rules = ["stop = stop_atr x ATR(14), take-profit = tp_atr x ATR(14), from the entry quote", "flat before scheduled closures and tier-1 US releases"]
+stop = "stop_atr x ATR(14) at the decision bar"
+invalidation = ["out-of-sample expectancy <= 0 R after costs", "fails at 2x cost stress", "does not beat the matched random baseline"]
+no_trade_conditions = ["reopen window", "pre-close buffer", "+-15 min around CPI/NFP/FOMC", "risk gate rejection"]
+baseline = "matched random entry (R9.2) and no-trade"
+cost_model = "Vault spread measured by `atlas spread-profile` (p90); slippage provisional until measured"
+max_trials = 24
+success_criteria = { min_oos_trades = 200, net_expectancy_r_gt = 0.0, profit_factor_gt = 1.1, survives_cost_x = 2.0, beats_random_percentile = 0.95 }
+
+[parameters]
+lookback = [24, 48]
+atr_expansion = [1.0, 1.2]
+stop_atr = [1.5, 2.0]
+tp_atr = [2.0, 3.0]

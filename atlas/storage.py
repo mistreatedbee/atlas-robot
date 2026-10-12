@@ -20,7 +20,7 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
@@ -221,6 +221,21 @@ CREATE TABLE IF NOT EXISTS reserved_test_windows (
 );
 CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_delete BEFORE DELETE ON reserved_test_windows
 BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
+-- ---- Pre-registered hypotheses (docs/07): written BEFORE testing, never edited, only superseded ------------
+CREATE TABLE IF NOT EXISTS hypotheses (
+    hypothesis_id     TEXT PRIMARY KEY,
+    registered_at_ms  INTEGER NOT NULL,
+    strategy          TEXT NOT NULL,
+    file_name         TEXT NOT NULL,
+    spec_json         TEXT NOT NULL,
+    spec_sha256       TEXT NOT NULL,
+    supersedes        TEXT REFERENCES hypotheses(hypothesis_id)
+);
+CREATE TRIGGER IF NOT EXISTS hypotheses_no_update BEFORE UPDATE ON hypotheses
+BEGIN SELECT RAISE(ABORT, 'registered hypotheses are immutable; register a new one that supersedes it'); END;
+CREATE TRIGGER IF NOT EXISTS hypotheses_no_delete BEFORE DELETE ON hypotheses
+BEGIN SELECT RAISE(ABORT, 'registered hypotheses are permanent'); END;
+
 -- ---- Ticks (bid/ask quotes from broker exports) ---------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tick_imports (
     import_id        TEXT PRIMARY KEY,
@@ -354,6 +369,7 @@ class Store:
             "DROP TRIGGER IF EXISTS experiments_config_immutable"),  # recreated below with more frozen columns
         5: (),  # v5 adds the paper-execution tables (order journal, positions, fills), created by the DDL below
         6: (),  # v6 adds tick storage (ticks, tick_imports), created by the DDL below
+        7: (),  # v7 adds the pre-registration table (hypotheses), created by the DDL below
     }
 
     def _columns(self, table: str) -> set[str]:
