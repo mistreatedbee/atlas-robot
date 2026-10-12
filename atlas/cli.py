@@ -345,6 +345,54 @@ def cmd_paper_run(settings, args) -> int:
     return 0
 
 
+def cmd_import_ticks(settings, args) -> int:
+    from .ticks import TickImportError, import_ticks
+
+    cfg = settings.provider(args.provider)
+    model = cfg.options.get("server_time_model")
+    if cfg.kind != "mt5_export" or not model:
+        print(f"error: provider {args.provider} is not an MT5 export provider with a server_time_model", file=sys.stderr)
+        return 2
+    with Store(settings.database_path) as store:
+        try:
+            r = import_ticks(store, settings.root / args.file, instrument_id=args.instrument, provider=cfg.name,
+                             venue=cfg.options["venue"], server_time_model=model, now_ms=system_clock_ms())
+        except TickImportError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+    if r.already_imported:
+        print(f"already imported (import {r.import_id[:8]}); nothing written")
+    else:
+        print(f"imported {r.rows_imported} ticks ({r.rows_rejected} rejected, {r.duplicates_ignored} duplicates); "
+              f"server time verified by bar run {r.basis_run_id[:8]}")
+    return 0
+
+
+def cmd_spread_profile(settings, args) -> int:
+    from .events import EventCalendar
+    from .sessions import XauCfd
+    from .ticks import load_ticks, spread_profile, suggested_costs
+
+    cfg = settings.provider(args.provider)
+    with Store(settings.database_path) as store:
+        ticks = load_ticks(store, args.instrument, cfg.name, cfg.options["venue"], parse_utc(args.start), parse_utc(args.end))
+    if not ticks:
+        print("no ticks in range; run `atlas import-ticks` first", file=sys.stderr)
+        return 2
+    cal = EventCalendar.load(settings.root / "config/events/us_tier1.csv")
+    prof = spread_profile(ticks, calendar=XauCfd(), reopen_minutes=args.reopen_minutes, events=cal)
+    print(f"time-weighted spread, USD/oz ({len(ticks)} quotes, {fmt_ms(ticks[0].time_ms)} -> {fmt_ms(ticks[-1].time_ms)})")
+    print(f"{'bucket':<16}{'p50':>8}{'p90':>8}{'p99':>8}{'max':>8}{'minutes':>10}")
+    for k, v in prof.items():
+        print(f"{k:<16}{v.get('p50', 0):>8.2f}{v.get('p90', 0):>8.2f}{v.get('p99', 0):>8.2f}{v['max']:>8.2f}"
+              f"{v['minutes']:>10.1f}")
+    if "normal" in prof:
+        sug = suggested_costs(prof, tick_size=args.tick_size, source=f"{cfg.name} ticks {args.start}..{args.end}")
+        print(f"suggested [costs]: base_spread_usd = {sug['base_spread_usd']}, reopen_spread_usd = "
+              f"{sug['reopen_spread_usd']} ({sug['basis']}); {sug['note']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -427,6 +475,19 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--equity-from-account", action="store_true", help="paper equity = live account equity")
     pr.add_argument("--kill-switch", default="data/KILL_SWITCH")
 
+    it = sub.add_parser("import-ticks", help="import an MT5 tick export (bid/ask) after a verified bar import")
+    it.add_argument("--provider", default="vault_mt5")
+    it.add_argument("--instrument", default="XAUUSD")
+    it.add_argument("--file", required=True, help="e.g. data/imports/vault_markets/XAUUSD_ticks_20261005_20261009.csv")
+
+    sp = sub.add_parser("spread-profile", help="measured, time-weighted spread profile from stored ticks")
+    sp.add_argument("--provider", default="vault_mt5")
+    sp.add_argument("--instrument", default="XAUUSD")
+    sp.add_argument("--start", required=True)
+    sp.add_argument("--end", required=True)
+    sp.add_argument("--reopen-minutes", type=int, default=15)
+    sp.add_argument("--tick-size", type=float, default=0.01, help="from the verified spec")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -435,7 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
             "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check,
-            "paper-run": cmd_paper_run, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "paper-run": cmd_paper_run, "import-ticks": cmd_import_ticks, "spread-profile": cmd_spread_profile, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:

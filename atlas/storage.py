@@ -20,7 +20,7 @@ from . import __version__
 from .config import Instrument
 from .models import Candle, DataLabel, PriceBasis, RejectedRecord, ValidationStatus, VolumeKind
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 CANDLE_VALUE_COLUMNS = (
     "close_time_utc", "open", "high", "low", "close", "price_basis",
@@ -221,6 +221,36 @@ CREATE TABLE IF NOT EXISTS reserved_test_windows (
 );
 CREATE TRIGGER IF NOT EXISTS reserved_test_windows_no_delete BEFORE DELETE ON reserved_test_windows
 BEGIN SELECT RAISE(ABORT, 'reserved test windows are permanent'); END;
+-- ---- Ticks (bid/ask quotes from broker exports) ---------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tick_imports (
+    import_id        TEXT PRIMARY KEY,
+    instrument_id    TEXT NOT NULL,
+    provider         TEXT NOT NULL,
+    venue            TEXT NOT NULL,
+    file_name        TEXT NOT NULL,
+    file_sha256      TEXT NOT NULL,
+    server_time_model TEXT NOT NULL,
+    server_time_basis TEXT NOT NULL,   -- which bar ingestion run verified the model
+    rows_imported    INTEGER NOT NULL,
+    rows_rejected    INTEGER NOT NULL,
+    first_ms         INTEGER,
+    last_ms          INTEGER,
+    imported_at_ms   INTEGER NOT NULL,
+    UNIQUE (provider, venue, file_sha256)
+);
+CREATE TABLE IF NOT EXISTS ticks (
+    instrument_id TEXT NOT NULL,
+    provider      TEXT NOT NULL,
+    venue         TEXT NOT NULL,
+    time_ms       INTEGER NOT NULL,   -- UTC
+    seq           INTEGER NOT NULL,   -- order within the same millisecond, as in the source file
+    bid           REAL NOT NULL CHECK (bid > 0),
+    ask           REAL NOT NULL,
+    import_id     TEXT NOT NULL REFERENCES tick_imports(import_id),
+    PRIMARY KEY (instrument_id, provider, venue, time_ms, seq),
+    CHECK (ask >= bid)
+) WITHOUT ROWID;
+
 -- ---- Paper execution (simulated; there is no live executor) -------------------------------------------
 -- One row per client order id: the PRIMARY KEY is the duplicate-order guard, and it survives restarts.
 CREATE TABLE IF NOT EXISTS order_journal (
@@ -323,6 +353,7 @@ class Store:
         4: (("experiments", "look_key", "TEXT"), ("experiments", "cost_multiplier", "REAL"),
             "DROP TRIGGER IF EXISTS experiments_config_immutable"),  # recreated below with more frozen columns
         5: (),  # v5 adds the paper-execution tables (order journal, positions, fills), created by the DDL below
+        6: (),  # v6 adds tick storage (ticks, tick_imports), created by the DDL below
     }
 
     def _columns(self, table: str) -> set[str]:

@@ -142,3 +142,19 @@ Items 1–5 are enough to start Phase 2. The full history (6) can follow, becaus
 >
 > Thank you,
 > [Your name]
+
+---
+
+## What Atlas does with the files (you don't need to run these; listed for transparency)
+
+```bash
+atlas ingest --provider vault_mt5 --instrument XAUUSD --timeframe M1 --start 2026-10-05 --end 2026-10-10
+#   checks the server time zone against the Friday close and Sunday reopen; refuses to import if they disagree
+atlas import-ticks --file data/imports/vault_markets/XAUUSD_ticks_20261005_20261009.csv
+#   only accepted after the bar import above has verified the time zone
+atlas spread-profile --start 2026-10-05 --end 2026-10-10
+#   measured, time-weighted spread by New York hour, at the reopen and around CPI/NFP/FOMC; suggests [costs] values
+```
+
+The **Specification screenshot** settles the micro-account contract size. That decides whether R500 can trade
+within the 1% risk limit (see `atlas risk-feasibility`).
