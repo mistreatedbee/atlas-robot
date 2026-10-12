@@ -276,6 +276,12 @@ def cmd_mt5_check(settings, args) -> int:
         print(f"quote     : bid {t.bid} ask {t.ask} spread {t.spread:.2f} (server time {t.time_server_s})")
         pos = ro.positions(args.symbol)
         print(f"positions : {len(pos)} open on {args.symbol}")
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from .broker.mt5_readonly import commission_from_deals
+        now_dt = _dt.now(_tz.utc)
+        com = commission_from_deals(ro.deals(now_dt - _td(days=90), now_dt), args.symbol, acc.currency)
+        print(f"commission: {com.per_lot_round_turn if com.per_lot_round_turn is not None else 'unknown'} "
+              f"{com.currency} per lot round turn ({com.note}; {com.deals_used} deals, last 90 days)")
         if args.write_spec:
             out = settings.root / args.write_spec
             out.write_text(spec_toml_from_snapshots(sym, acc, broker="Vault Markets",

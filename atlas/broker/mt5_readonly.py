@@ -233,6 +233,12 @@ class Mt5ReadOnly:
                                  float(_get(p, "price_open")), float(_get(p, "sl")), float(_get(p, "tp")),
                                  int(_get(p, "magic")), str(_get(p, "comment") or "")) for p in rows]
 
+    def deals(self, start_utc: datetime, end_utc: datetime) -> list:
+        rows = self.mt5.history_deals_get(start_utc, end_utc)
+        if rows is None:
+            raise BrokerReadError(f"history_deals_get failed: {self.mt5.last_error()}")
+        return list(rows)
+
     def rates_range(self, symbol: str, timeframe: str, start_utc: datetime, end_utc: datetime) -> list[dict]:
         tf = {"M1": self.mt5.TIMEFRAME_M1, "M5": self.mt5.TIMEFRAME_M5}[timeframe]
         rows = self.mt5.copy_rates_range(symbol, tf, start_utc, end_utc)
@@ -240,6 +246,30 @@ class Mt5ReadOnly:
             raise BrokerReadError(f"copy_rates_range failed: {self.mt5.last_error()}")
         return [{k: _get(r, k) for k in ("time", "open", "high", "low", "close", "tick_volume", "spread")}
                 for r in rows]
+
+
+@dataclass(frozen=True)
+class CommissionEstimate:
+    per_lot_round_turn: float | None  # account currency per 1.0 lot, entry + exit; None if no evidence
+    currency: str
+    deals_used: int
+    note: str
+
+
+def commission_from_deals(deals: list, symbol: str, currency: str) -> CommissionEstimate:
+    """Infer commission per lot round turn from executed deals (history_deals_get): sum of commission over the
+    entry and exit deals of the symbol divided by the volume of entries. MT5 reports commission as a negative
+    amount in the account currency. No deals -> None (never assumed)."""
+    rows = [d for d in deals if str(_get(d, "symbol")) == symbol]
+    entries = [d for d in rows if int(_get(d, "entry")) == 0]  # DEAL_ENTRY_IN
+    entry_volume = sum(float(_get(d, "volume")) for d in entries)
+    if not rows or entry_volume <= 0:
+        return CommissionEstimate(None, currency, 0, "no executed deals for this symbol yet: do one demo trade")
+    total = -sum(float(_get(d, "commission") or 0.0) for d in rows)
+    if total < 0:
+        return CommissionEstimate(None, currency, len(rows), "positive commission reported: needs manual review")
+    return CommissionEstimate(round(total / entry_volume, 6), currency, len(rows),
+                              "from executed deals (entry+exit) / entry volume")
 
 
 def spec_toml_from_snapshots(sym: SymbolSnapshot, acc: AccountSnapshot, *, broker: str, server_time_model: str,

@@ -67,6 +67,9 @@ class FakeMt5:
     def positions_get(self, symbol=None):
         return [Position(1, "XAUUSD", 0, 0.01, 2400.0, 2395.0, 2410.0, 7, "atlas")]
 
+    def history_deals_get(self, start, end):
+        return getattr(self, "deals_rows", [])
+
     def copy_rates_range(self, symbol, tf, start, end):
         return [{"time": 1_791_700_000, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "tick_volume": 10,
                  "spread": 20}]
@@ -199,3 +202,22 @@ def test_cli_mt5_check_refuses_trading_enabled_real_account(monkeypatch, tmp_pat
         'session_calendar = "xau_cfd"\n', encoding="utf-8")
     assert cli.main(["--config", str(tmp_path / "atlas.toml"), "mt5-check"]) == 2
     assert "INVESTOR" in capsys.readouterr().err
+
+
+Deal = namedtuple("Deal", "symbol entry volume commission")
+
+
+def test_commission_from_deals():
+    from atlas.broker.mt5_readonly import commission_from_deals
+    deals = [Deal("XAUUSD", 0, 0.10, -0.35), Deal("XAUUSD", 1, 0.10, -0.35), Deal("EURUSD", 0, 1.0, -7.0)]
+    est = commission_from_deals(deals, "XAUUSD", "ZAR")
+    assert est.per_lot_round_turn == pytest.approx(7.0) and est.deals_used == 2  # (0.35 + 0.35) / 0.10 lot
+    none = commission_from_deals([], "XAUUSD", "ZAR")
+    assert none.per_lot_round_turn is None and "demo trade" in none.note  # never assumed
+    weird = commission_from_deals([Deal("XAUUSD", 0, 0.1, 1.0)], "XAUUSD", "ZAR")
+    assert weird.per_lot_round_turn is None and "manual review" in weird.note
+
+
+def test_history_deals_is_on_the_read_allowlist():
+    ro = Mt5ReadOnly(FakeMt5())
+    assert ro.deals(datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc)) == []
