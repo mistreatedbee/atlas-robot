@@ -82,7 +82,7 @@ def main() -> None:
             row[2] = round(min(bid[0], bid[3]) - 0.50, 2)  # high below the candle body
         rows.append(row)
 
-    with out.open("w", newline="") as fh:
+    with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["time", "open", "high", "low", "close", "volume", "ask_open", "ask_high", "ask_low", "ask_close"])
         w.writerows(rows)

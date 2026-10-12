@@ -73,9 +73,9 @@ def code_fingerprint(package_dir: Path | None = None) -> str:
     for f in sorted(root.rglob("*.py")):
         if "__pycache__" in f.parts:
             continue
-        h.update(str(f.relative_to(root)).encode())
+        h.update(f.relative_to(root).as_posix().encode())  # same on Windows, macOS, Linux
         h.update(b"\0")
-        h.update(f.read_bytes())
+        h.update(f.read_bytes().replace(b"\r\n", b"\n"))  # immune to CRLF checkouts
         h.update(b"\0")
     return h.hexdigest()
 

@@ -90,7 +90,7 @@ class KillSwitch:
 
     def engage(self, reason: str) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(reason)
+        self.path.write_text(reason, encoding="utf-8")
 
 
 @dataclass(frozen=True)

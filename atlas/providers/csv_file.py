@@ -76,7 +76,7 @@ class CsvFileProvider:
             return self._cache[key]
         tf = timeframe_ms(timeframe)
         result = FetchResult()
-        with self.path_for(symbol, timeframe).open(newline="") as fh:
+        with self.path_for(symbol, timeframe).open(newline="", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
             missing = {"time", *SIDE_FIELDS} - set(reader.fieldnames or [])
             if missing:

@@ -1,0 +1,4 @@
+# Identical bytes on every device (Windows, macOS, Linux): file hashes and the code fingerprint depend on it.
+* text=auto eol=lf
+*.png binary
+*.db binary

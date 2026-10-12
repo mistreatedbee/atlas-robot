@@ -43,8 +43,8 @@ def test_disabled_instrument_cannot_be_selected(tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "instruments.toml").write_text(
         '[[instrument]]\nid = "XAUUSD"\nasset_class = "metal_spot"\nbase = "XAU"\nquote = "USD"\n'
-        'session_calendar = "xau_cfd"\nenabled = false\n')
-    (tmp_path / "atlas.toml").write_text('[scope]\nauthorised_instruments = ["XAUUSD"]\n')
+        'session_calendar = "xau_cfd"\nenabled = false\n', encoding="utf-8")
+    (tmp_path / "atlas.toml").write_text('[scope]\nauthorised_instruments = ["XAUUSD"]\n', encoding="utf-8")
     with pytest.raises(ConfigError, match="disabled"):
         load_settings(tmp_path / "atlas.toml").instrument("XAUUSD")
 
@@ -69,6 +69,9 @@ def test_invalid_registry_is_rejected(raw, message):
 # ---- Phase 1 safety boundary: no trading capability exists ------------------------------------
 
 SOURCE = [p for p in (ROOT / "atlas").rglob("*.py")]
+# The single, separately-verified place allowed to import the MT5 package (read-only; see test_mt5_adapter_* below).
+MT5_ADAPTER = ROOT / "atlas" / "broker" / "mt5_readonly.py"
+MT5_ONLY_PATTERNS = {r"MetaTrader5", r"\bmt5\.initialize"}
 FORBIDDEN = [
     r"/api/v3/order", r"/fapi/v\d/order", r"newOrder", r"X-MBX-APIKEY", r"hmac", r"signature",
     r"api_secret", r"secret_key", r"place_order", r"submit_order",
@@ -82,7 +85,7 @@ FORBIDDEN = [
 
 def _scan_text(path: Path) -> str:
     """Source text with ONLY SQL trigger clauses removed (e.g. 'BEFORE DELETE ON experiments')."""
-    return re.sub(r"\bBEFORE\s+(DELETE|UPDATE|INSERT)\b", "", path.read_text(), flags=re.IGNORECASE)
+    return re.sub(r"\bBEFORE\s+(DELETE|UPDATE|INSERT)\b", "", path.read_text(encoding="utf-8"), flags=re.IGNORECASE)
 
 
 import ast  # noqa: E402
@@ -141,13 +144,52 @@ def test_ast_scan_has_no_false_positives_on_reads(snippet):
 
 
 def test_package_has_no_ast_violations():
-    hits = {str(p.relative_to(ROOT)): v for p in SOURCE if (v := ast_violations(p.read_text()))}
-    assert hits == {}
+    hits = {str(p.relative_to(ROOT)): v for p in SOURCE if (v := ast_violations(p.read_text(encoding="utf-8")))}
+    assert hits == {MT5_ADAPTER.relative_to(ROOT).__str__(): ["import MetaTrader5"]}  # only the adapter, only that
+
+
+# ---- the read-only MT5 adapter: stricter, file-specific checks ------------------------------------------------
+
+def _adapter_tree():
+    return ast.parse(MT5_ADAPTER.read_text(encoding="utf-8"))
+
+
+def test_mt5_adapter_allowlist_contains_no_trading_functions():
+    from atlas.broker.mt5_readonly import READ_FUNCTIONS
+    bad = [f for f in READ_FUNCTIONS if f.startswith("order_") or "send" in f or "check" in f
+           or "TRADE_ACTION" in f or f == "login"]  # orders_get / history_orders_get only LIST orders
+    assert bad == []
+
+
+def test_mt5_adapter_touches_only_allowlisted_mt5_functions():
+    from atlas.broker.mt5_readonly import READ_FUNCTIONS
+    used = set()
+    for node in ast.walk(_adapter_tree()):
+        # self.mt5.<name>
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "mt5" and isinstance(node.value.value, ast.Name)):
+            used.add(node.attr)
+    assert used and used <= READ_FUNCTIONS, used - READ_FUNCTIONS
+
+
+def test_mt5_adapter_imports_package_only_in_loader():
+    for node in ast.walk(_adapter_tree()):
+        if isinstance(node, ast.FunctionDef):
+            imports = [n for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))]
+            if any(a.name == "MetaTrader5" for i in imports if isinstance(i, ast.Import) for a in i.names):
+                assert node.name == "load_mt5_module"
+    top_level = [n for n in _adapter_tree().body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    assert not any(getattr(a, "name", "") == "MetaTrader5" for i in top_level for a in i.names)
+
+
+def test_mt5_package_imported_nowhere_else():
+    others = [p for p in SOURCE if p != MT5_ADAPTER and re.search(r"MetaTrader5", p.read_text(encoding="utf-8"))]
+    assert others == []
 
 
 def test_scan_exempts_only_sql_trigger_clauses(tmp_path):
     f = tmp_path / "x.py"
-    f.write_text("CREATE TRIGGER t BEFORE DELETE ON experiments\nrequests.delete(u)\n")
+    f.write_text("CREATE TRIGGER t BEFORE DELETE ON experiments\nrequests.delete(u)\n", encoding="utf-8")
     text = _scan_text(f)
     assert "BEFORE DELETE" not in text and re.search(r"\bDELETE\b", text, re.IGNORECASE)
 
@@ -183,7 +225,8 @@ def test_http_transport_sends_only_bodiless_get(monkeypatch):
 
 @pytest.mark.parametrize("pattern", FORBIDDEN)
 def test_no_order_or_credential_code_in_package(pattern):
-    hits = [f"{p.relative_to(ROOT)}" for p in SOURCE if re.search(pattern, _scan_text(p), re.IGNORECASE)]
+    files = [p for p in SOURCE if not (p == MT5_ADAPTER and pattern in MT5_ONLY_PATTERNS)]
+    hits = [f"{p.relative_to(ROOT)}" for p in files if re.search(pattern, _scan_text(p), re.IGNORECASE)]
     assert hits == [], f"pattern {pattern!r} found in {hits}"
 
 
@@ -199,4 +242,4 @@ def test_dormant_binance_reference_provider_uses_market_data_only_host():
 
 def test_no_credentials_in_config_files():
     for path in [ROOT / "atlas.toml", *Path(ROOT / "config").glob("*.toml")]:
-        assert not re.search(r"(api[_-]?key|secret|token|password)\s*=", path.read_text(), re.IGNORECASE), path
+        assert not re.search(r"(api[_-]?key|secret|token|password)\s*=", path.read_text(encoding="utf-8"), re.IGNORECASE), path

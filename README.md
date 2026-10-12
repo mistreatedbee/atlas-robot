@@ -23,12 +23,23 @@ Start with [docs/00_scope_xauusd.md](docs/00_scope_xauusd.md), then [docs/01_res
 | [10 Vault Markets data checklist](docs/10_vault_markets_data_checklist.md) | Step-by-step: what to get from support and MT5, file names, support message |
 | [11 Status and backlog](docs/11_status_and_backlog.md) | Current state with evidence, prioritised backlog, blockers |
 | [12 Decision log](docs/12_decision_log.md) | Engineering decisions, reasons, how to reverse |
+| [14 Vault/MT5 integration + device setup](docs/14_vault_mt5_integration.md) | How Atlas reads the Vault account via MT5 (read-only), Windows/macOS/Linux setup, credentials rules, your checklist |
 | [13 Simulation rules](docs/13_simulation_rules.md) | Backtest rules v2 (fills, exits, costs, gate mapping, splits, metrics, baselines, leakage test) |
 
 ## Setup
 
-Requires Python ≥ 3.11 (developed on 3.14.6, macOS). Runtime dependencies: the standard library plus
-`certifi` (a CA bundle; python.org macOS builds cannot verify HTTPS without it). Dev dependency: `pytest`.
+Runs on **Windows, macOS and Linux** (tested on all three by GitHub Actions, Python 3.11–3.13). The read-only
+MetaTrader 5 link needs Windows: see [docs/14](docs/14_vault_mt5_integration.md). Windows (PowerShell):
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev,mt5]"
+.venv\Scripts\python -m pytest -q
+```
+
+macOS / Linux: requires Python ≥ 3.11 (developed on 3.14.6, macOS). Runtime dependencies: the standard library plus
+`certifi` (CA bundle), `numpy` and `tzdata` (time zones on Windows). Dev: `pytest`. Optional `[mt5]`: the official
+`MetaTrader5` package (Windows only).
 
 ```bash
 cd AshleyFx_Robot2.0

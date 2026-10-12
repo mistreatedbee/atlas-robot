@@ -224,9 +224,9 @@ def test_max_hold_and_end_of_data_exits():
 
 
 def test_commission_charged_half_each_side(tmp_path):
-    text = (ROOT / "config/brokers/PROVISIONAL_dev_xauusd.toml").read_text().replace(
+    text = (ROOT / "config/brokers/PROVISIONAL_dev_xauusd.toml").read_text(encoding="utf-8").replace(
         "commission_per_lot_round_turn = 0.0", "commission_per_lot_round_turn = 7.0")
-    (tmp_path / "s.toml").write_text(text)
+    (tmp_path / "s.toml").write_text(text, encoding="utf-8")
     spec = load_spec(tmp_path / "s.toml")
     bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.41, 2400.9, 2403.0)]
     r = run_backtest(bars, Scripted(BUY), spec=spec, limits=LIMITS, costs=COSTS, calendar=XauCfd(),

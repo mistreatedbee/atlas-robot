@@ -81,10 +81,10 @@ def test_test_period_guard(store):
 
 
 def test_failed_experiment_is_recorded(store, tmp_path):
-    text = (ROOT / "experiments/baseline_no_trade_sample.toml").read_text().replace(
+    text = (ROOT / "experiments/baseline_no_trade_sample.toml").read_text(encoding="utf-8").replace(
         'validation = ["2026-08-13", "2026-08-20"]', 'validation = ["2026-08-13", "2026-08-20"]').replace(
         'train = ["2026-08-03", "2026-08-12"]', 'train = ["2025-01-01", "2025-02-01"]')  # no data then
-    (tmp_path / "x.toml").write_text(text)
+    (tmp_path / "x.toml").write_text(text, encoding="utf-8")
     e = load_experiment(tmp_path / "x.toml", ROOT)
     with pytest.raises(ExperimentError, match="no stored candles"):
         run_experiment(store, e, "train")
@@ -108,20 +108,20 @@ def test_matched_random_percentile(store):
 
 
 def test_invalid_experiment_configs(tmp_path):
-    base = (ROOT / "experiments/baseline_no_trade_sample.toml").read_text()
-    (tmp_path / "a.toml").write_text(base.replace('name = "no_trade"', 'name = "magic_profit"'))
+    base = (ROOT / "experiments/baseline_no_trade_sample.toml").read_text(encoding="utf-8")
+    (tmp_path / "a.toml").write_text(base.replace('name = "no_trade"', 'name = "magic_profit"'), encoding="utf-8")
     with pytest.raises(ExperimentError, match="unknown strategy"):
         load_experiment(tmp_path / "a.toml", ROOT)
-    (tmp_path / "b.toml").write_text(base.replace('validation = ["2026-08-13"', 'validation = ["2026-08-12"'))
+    (tmp_path / "b.toml").write_text(base.replace('validation = ["2026-08-13"', 'validation = ["2026-08-12"'), encoding="utf-8")
     from atlas.research.splits import SplitError
     with pytest.raises(SplitError):
         load_experiment(tmp_path / "b.toml", ROOT)
 
 
 def test_finding_9_setup_failures_are_recorded(store, tmp_path):
-    text = (ROOT / "experiments/baseline_random_entry_sample.toml").read_text().replace(
+    text = (ROOT / "experiments/baseline_random_entry_sample.toml").read_text(encoding="utf-8").replace(
         "params = { seed = 1,", "params = { bogus = 1, seed = 1,")
-    (tmp_path / "bad.toml").write_text(text)
+    (tmp_path / "bad.toml").write_text(text, encoding="utf-8")
     with pytest.raises(ExperimentError, match="setup failed"):
         run_experiment(store, load_experiment(tmp_path / "bad.toml", ROOT), "train")
     rec = Ledger(store).list(1)[0]
@@ -150,7 +150,7 @@ def test_finding_12_data_labels_are_those_of_the_data_used(store):
 def test_recheck_unloadable_config_is_recorded(store, tmp_path):
     from atlas.backtest.runner import load_experiment_recorded
     bad = tmp_path / "broken.toml"
-    bad.write_text('hypothesis_id = "H-broken"\nname = "x"\n')  # missing everything else
+    bad.write_text('hypothesis_id = "H-broken"\nname = "x"\n', encoding="utf-8")  # missing everything else
     with pytest.raises(ExperimentError, match="could not be loaded"):
         load_experiment_recorded(store, bad, ROOT, "validation")
     rec = Ledger(store).list(1)[0]

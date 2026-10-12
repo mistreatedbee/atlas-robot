@@ -259,11 +259,11 @@ def test_recheck_legacy_test_runs_get_windows_backfilled():
 def test_finding_10_code_version_flags_untracked_files(tmp_path):
     import subprocess
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / "a.txt").write_text("a")
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
     subprocess.run(["git", "add", "a.txt"], cwd=tmp_path, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=tmp_path, check=True)
     assert not code_version(tmp_path).endswith("+dirty")
-    (tmp_path / "new_strategy.py").write_text("x = 1")
+    (tmp_path / "new_strategy.py").write_text("x = 1", encoding="utf-8")
     assert code_version(tmp_path).endswith("+dirty")
 
 
@@ -273,15 +273,15 @@ def test_recheck2_1_code_fingerprint_tracks_code_content_only(tmp_path):
     from atlas.research.ledger import code_fingerprint
     pkg = tmp_path / "atlas"
     (pkg / "backtest").mkdir(parents=True)
-    (pkg / "backtest" / "engine.py").write_text("x = 1\n")
+    (pkg / "backtest" / "engine.py").write_text("x = 1\n", encoding="utf-8")
     base = code_fingerprint(pkg)
-    (tmp_path / "notes_untracked.txt").write_text("hello")          # untracked note outside the package
-    (tmp_path / "README.md").write_text("docs change")               # docs change
+    (tmp_path / "notes_untracked.txt").write_text("hello", encoding="utf-8")          # untracked note outside the package
+    (tmp_path / "README.md").write_text("docs change", encoding="utf-8")               # docs change
     assert code_fingerprint(pkg) == base
-    (pkg / "backtest" / "costs.py").write_text("y = 2\n")             # an uncommitted code edit
+    (pkg / "backtest" / "costs.py").write_text("y = 2\n", encoding="utf-8")             # an uncommitted code edit
     first_edit = code_fingerprint(pkg)
     assert first_edit != base
-    (pkg / "backtest" / "costs.py").write_text("y = 3\n")             # a different edit -> different identity
+    (pkg / "backtest" / "costs.py").write_text("y = 3\n", encoding="utf-8")             # a different edit -> different identity
     assert code_fingerprint(pkg) != first_edit
 
 

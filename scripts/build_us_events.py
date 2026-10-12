@@ -89,7 +89,7 @@ def main() -> None:
                      "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", note))
     rows.sort(key=lambda r: utc_ms(r[2], r[3]))
     out = Path(__file__).resolve().parents[1] / "config" / "events" / "us_tier1.csv"
-    with out.open("w", newline="") as fh:
+    with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["event_id", "category", "tier", "reference", "release_ny", "release_utc_ms",
                     "known_since_utc_ms", "source", "notes"])

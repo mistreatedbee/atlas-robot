@@ -34,7 +34,7 @@ model = "ny_close_midnight"
 
 def write(tmp_path, text, name="spec.toml"):
     p = tmp_path / name
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     return p
 
 

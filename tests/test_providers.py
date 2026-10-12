@@ -93,7 +93,7 @@ def test_http_does_not_retry_client_errors_or_bans(status):
 # ---- Binance ---------------------------------------------------------------------------------
 
 def test_binance_parses_recorded_response():
-    rows = json.loads(FIXTURE.read_text())
+    rows = json.loads(FIXTURE.read_text(encoding="utf-8"))
     t = ScriptedTransport(ok(rows, {"x-mbx-used-weight-1m": "2"}))
     provider = BinanceSpotProvider(client(t))
     start = utc_ms(2026, 10, 11)
@@ -113,7 +113,7 @@ def test_binance_parses_recorded_response():
 
 
 def test_binance_rejects_rows_with_inconsistent_close_time_or_garbage():
-    rows = json.loads(FIXTURE.read_text())
+    rows = json.loads(FIXTURE.read_text(encoding="utf-8"))
     bad_close = list(rows[0]); bad_close[6] = bad_close[0] + 59_999  # a 1m bar in an H1 request
     garbage = ["x"]
     t = ScriptedTransport(ok([bad_close, garbage, rows[1]]))
@@ -147,7 +147,7 @@ def test_csv_provider_parses_and_rejects(tmp_path):
         "2026-10-07T00:00:00Z,1.1,1.2,1.0,1.15,10\n"
         "2026-10-07T01:00:00Z,1.15,oops,1.0,1.1,10\n"
         "2026-10-07T02:00:00Z,1.1,1.2,1.0,1.15,\n"
-    )
+    , encoding="utf-8")
     p = CsvFileProvider(name="user_csv", venue="v", path_template=tmp_path / "{symbol}_{timeframe}.csv",
                         data_label=DataLabel.USER_FILE, price_basis=PriceBasis.BID, volume_kind=VolumeKind.TICK_COUNT)
     res = p.fetch("EURUSD", "EURUSD", "H1", utc_ms(2026, 10, 7), utc_ms(2026, 10, 8))

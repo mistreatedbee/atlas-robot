@@ -7,10 +7,16 @@ name = "atlas-research"
 version = "0.1.0"
 description = "Project Atlas Phase 1: market-data ingestion, validation and storage for research. No trading."
 requires-python = ">=3.11"
-dependencies = ["certifi>=2024.2.2", "numpy>=2.1"]   # certifi: CA bundle for verified HTTPS; numpy: feature computation
+dependencies = [
+    "certifi>=2024.2.2",   # CA bundle for verified HTTPS on every OS
+    "numpy>=2.1",          # feature computation
+    "tzdata>=2024.1",      # IANA time zones: Windows has no system tz database; identical rules on every device
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Read-only MetaTrader 5 access (official MetaQuotes package). Windows only; it talks to a local MT5 terminal.
+mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 
 [project.scripts]
 atlas = "atlas.cli:main"

@@ -38,7 +38,7 @@ class EventCalendar:
 
     @classmethod
     def load(cls, path: str | Path) -> EventCalendar:
-        with Path(path).open(newline="") as fh:
+        with Path(path).open(newline="", encoding="utf-8") as fh:
             return cls([EconEvent(r["event_id"], r["category"], int(r["tier"]), r["reference"],
                                   int(r["release_utc_ms"]), int(r["known_since_utc_ms"]), r["source"], r["notes"])
                         for r in csv.DictReader(fh)])
