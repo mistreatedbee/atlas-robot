@@ -60,10 +60,21 @@ The automated test suite runs on **Windows, macOS and Linux** (Python 3.11–3.1
    - Tick **Save password**.
 
    The password is stored only in the MT5 terminal on that machine. Atlas never sees it.
-4. **Run the read-only check:** `atlas mt5-check` (next deliverable). It prints the account mode, whether trading
-   is allowed, and the XAUUSD specification.
+4. **Run the read-only check:** `.venv\Scripts\atlas mt5-check`. It prints the account mode, whether trading is
+   allowed, and the XAUUSD specification.
    - It refuses to run against a **real** account that has trading enabled. Log in with the investor password for
      this stage.
+
+5. **Paper-trade on live prices** (simulated fills only; nothing reaches Vault):
+   ```powershell
+   .venv\Scripts\atlas paper-run --experiment experiments\baseline_random_entry_sample.toml --minutes 60 --equity-from-account
+   ```
+   - **Stops** with a clear message if MT5's timestamps disagree with this PC's clock during market hours. That would
+     mean a wrong server-time model; set the right one with `--server-time-model`.
+   - **Never acts on stale prices,** and backs off and retries if the terminal disconnects.
+   - **Survives restarts:** stopping it (Ctrl+C) is safe. Open paper positions and the order journal are kept and
+     picked up by the next run, and no decision is ever filled twice.
+   - **Kill switch:** create the file `data\KILL_SWITCH` to block all new entries.
 
 ### macOS / Linux setup
 ```bash
@@ -83,7 +94,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/python -
 |---|---|---|---|
 | 1. Read-only | `atlas/broker/mt5_readonly.py` | **No** | Proxy exposes only read functions; trading names unreachable; a real account must be on the investor login; dedicated safety tests |
 | 2. Order preparation | `atlas/broker/orders.py` | **No** (no send capability) | Requires an approved risk decision and a verified spec. Fresh quote. Volume min/max/step, stop-loss/take-profit side and rounding, stops/freeze distances checked against live bid/ask. Deterministic client order ID |
-| 3. Simulated execution | paper executor (next milestone) | Simulated only | Duplicate-order journal, reconnection handling, kill switch, same risk gate |
+| 3. Simulated execution | `atlas/broker/paper.py`, `session.py`, `live_paper.py`, `atlas paper-run` | Simulated only | Persistent duplicate-order journal, fail-closed fills, reconnection backoff, clock check, kill switch, same risk gate; identical to the backtester on the same data |
 | 4. Live execution | **not built** | — | Built only after **your explicit written authorisation**, once everything in the live-readiness list below has been verified, and as a separately reviewed module |
 
 **Live-readiness list (all required before stage 4 can even be built):**

@@ -27,6 +27,7 @@
 | Cross-platform (Windows, macOS, Linux; Python 3.11–3.13) | **Verified by GitHub Actions** (9/9 jobs green) | `.github/workflows/tests.yml` |
 | Paper-trading executor (persistent duplicate-order journal, fail-closed fills, restart recovery, emergency stop, connection monitor) | Built | `test_paper.py` |
 | Paper-trading session loop (strategy → gate → order preparation → paper fills) | Built; **identical to the backtester on the same data** | `test_paper_session.py` |
+| Live paper trading on MT5 quotes (`atlas paper-run`, Windows) | Built; tested with a SIMULATED terminal; **not yet run on the real Vault terminal** | `test_live_paper.py` |
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
 Tests: **392 passed, 2 skipped (live, opt-in)** locally; CI green on Windows, macOS and Linux.

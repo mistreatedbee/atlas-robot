@@ -298,7 +298,8 @@ def run_backtest(
                         TradeIntent(sig.side, fill, stop, b), spec,
                         AccountState(equity=realised, free_margin=realised, day_start_equity=day_start,
                                      peak_equity=peak, open_risk=0.0, trades_today=trades_today, verified_at_ms=b),
-                        limits, CostInputs(spread, slip, rate_e, costs.sources),
+                        # the gate sees the spread actually paid at this fill (bar ask may exceed the model)
+                        limits, CostInputs(ask_open - c.open, slip, rate_e, costs.sources),
                         now_ms=b, mode=Mode.BACKTEST, kill_switch=kill)
                     if not decision.approved:
                         events.append(Event(b, "risk_rejected", ",".join(ch.rule for ch in decision.failed)))

@@ -287,6 +287,58 @@ def cmd_mt5_check(settings, args) -> int:
     return 0
 
 
+def cmd_paper_run(settings, args) -> int:
+    """PAPER trading on live MT5 quotes (Windows). Reads only; simulated fills only; never places real orders."""
+    import time as _t
+
+    from .backtest.runner import build_strategy, load_experiment
+    from .broker.live_paper import LivePaperDriver
+    from .broker.mt5_readonly import BrokerReadError, Mt5ReadOnly, ReadOnlyViolation
+    from .broker.paper import ConnectionMonitor, PaperBroker
+    from .broker.session import PaperSession
+    from .brokers.server_time import ServerTimeError, ServerTimeModel
+    from .brokers.spec import load_spec
+    from .risk.gate import KillSwitch, RiskLimits
+    from .sessions import XauCfd
+
+    exp = load_experiment(settings.root / args.experiment, settings.root)
+    spec = load_spec(settings.root / args.spec) if args.spec else load_spec(exp.spec_path)
+    try:
+        ro = Mt5ReadOnly()
+        acc = ro.connect()
+    except (BrokerReadError, ReadOnlyViolation) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    equity = acc.equity if args.equity_from_account else exp.engine.initial_equity
+    print(f"PAPER TRADING (simulated fills; no real orders) on {acc.server}, mode={acc.trade_mode}; "
+          f"spec {spec.label}; paper equity {equity:.2f}")
+    with Store(settings.database_path) as store:
+        broker = PaperBroker(store, spec, kill_switch=KillSwitch(settings.root / args.kill_switch),
+                             slippage_usd=exp.costs.slippage_usd)
+        strategy = build_strategy(exp.strategy_name, exp.strategy_params)
+        session = PaperSession(strategy, broker=broker, spec=spec, limits=RiskLimits.load(exp.limits_path),
+                               costs=exp.costs, calendar=XauCfd(), initial_equity=equity,
+                               strategy_id=f"{exp.hypothesis_id}:{strategy.name}", candles=[])
+        driver = LivePaperDriver(ro, session, symbol=args.symbol, timeframe=exp.data["timeframe"],
+                                 server_time=ServerTimeModel(args.server_time_model),
+                                 monitor=ConnectionMonitor(), calendar=XauCfd())
+        try:
+            driver.run(until_ms=int(_t.time() * 1000) + int(args.minutes * 60_000), poll_ms=int(args.poll_seconds * 1000))
+        except ServerTimeError as exc:
+            print(f"stopped: {exc}", file=sys.stderr)
+            return 2
+        except KeyboardInterrupt:
+            print("interrupted: open paper positions stay journalled and are managed again on the next run")
+        finally:
+            ro.close()
+        rep = session.rep
+        print(f"bars closed {len(session.candles)}, paper entries {len(rep.entries)}, exits {len(rep.exits)}, "
+              f"open now {len(broker.open_positions(args.symbol))}, clock verified {driver.clock_verified}")
+        for t, kind, detail in (driver.log + rep.events)[-10:]:
+            print(f"  {fmt_ms(t)} {kind} {detail}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -359,6 +411,16 @@ def build_parser() -> argparse.ArgumentParser:
     mc.add_argument("--server-time-model", default="ny_close_midnight",
                     help="must already have passed the export check (docs/10); recorded in the spec")
 
+    pr = sub.add_parser("paper-run", help="PAPER trade on live MT5 quotes (Windows; simulated fills only)")
+    pr.add_argument("--experiment", required=True, help="strategy, costs, limits and spec (experiments/*.toml)")
+    pr.add_argument("--spec", help="override spec file, e.g. one written by `atlas mt5-check --write-spec`")
+    pr.add_argument("--symbol", default="XAUUSD")
+    pr.add_argument("--server-time-model", default="ny_close_midnight")
+    pr.add_argument("--minutes", type=float, default=60.0)
+    pr.add_argument("--poll-seconds", type=float, default=1.0)
+    pr.add_argument("--equity-from-account", action="store_true", help="paper equity = live account equity")
+    pr.add_argument("--kill-switch", default="data/KILL_SWITCH")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -366,7 +428,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
-            "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check,
+            "paper-run": cmd_paper_run, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:
