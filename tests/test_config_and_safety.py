@@ -75,8 +75,6 @@ FORBIDDEN = [
     # HTTP write verbs as words (catches requests.post, httpx.put, session.delete, HTTPMethod.POST, "PATCH"...),
     # plus urllib's implicit POST when a body is passed. Only SQL trigger syntax is exempted (see _scan_text).
     r"\bPOST\b", r"\bDELETE\b", r"\bPUT\b", r"\bPATCH\b",
-    r"(?s)Request\(.{0,300}?\bdata\s*=", r"(?s)urlopen\(.{0,300}?\bdata\s*=",
-    r"urlopen\(\s*[^,()]+(\([^()]*\))?,\s*[^=,()]+[,)]", r"Request\(\s*[^,()]+,\s*[^=,()]+[,)]",
     r"\bhttp\.client\b", r"\bHTTPS?Connection\b",
     r"order_send", r"order_check", r"MetaTrader5", r"\bmt5\.initialize", r"TRADE_ACTION_",
 ]
@@ -87,14 +85,64 @@ def _scan_text(path: Path) -> str:
     return re.sub(r"\bBEFORE\s+(DELETE|UPDATE|INSERT)\b", "", path.read_text(), flags=re.IGNORECASE)
 
 
+import ast  # noqa: E402
+
+NETWORK_MODULES = {"socket", "http.client", "requests", "httpx", "aiohttp", "urllib3", "MetaTrader5",
+                   "ftplib", "smtplib", "websocket", "websockets"}
+
+
+def ast_violations(source: str) -> list[str]:
+    """Syntax-tree check for anything that could SEND data: Request/urlopen with a body (positional or data=,
+    or unpackable */** arguments), custom openers, and imports of raw network / trading libraries."""
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            out += [f"import {n}" for n in names if n in NETWORK_MODULES or n.split(".")[0] in NETWORK_MODULES]
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+            if name in ("build_opener", "OpenerDirector"):
+                out.append(name)
+            if name in ("Request", "urlopen"):
+                body = (len(node.args) > 1 or any(k.arg in (None, "data") for k in node.keywords)
+                        or any(isinstance(a, ast.Starred) for a in node.args))
+                if body:
+                    out.append(f"{name} with a body")
+    return out
+
+
 @pytest.mark.parametrize("snippet", [
     "requests.post(url)", "httpx.put(u)", "session.delete(x)", "HTTPMethod.POST", 'method="PATCH"',
-    "urllib.request.Request(url, data=b'x')", "urlopen(url, payload)", "urlopen(build(u), data=b'')",
-    "urllib.request.Request(url, payload)", "urlopen(Request(url), body)", "Request(\n    url,\n    data=b'x')",
     "conn = http.client.HTTPSConnection(h)",
 ])
-def test_scan_catches_write_requests(snippet):
+def test_scan_catches_write_verbs(snippet):
     assert any(re.search(p, snippet, re.IGNORECASE) for p in FORBIDDEN), snippet
+
+
+@pytest.mark.parametrize("snippet", [
+    "urllib.request.Request(url, data=b'x')", "urlopen(url, payload)", "urlopen(build(u), data=b'')",
+    "urllib.request.Request(url, payload)", "urlopen(Request(url), body)", "Request(\n    url,\n    data=b'x')",
+    "Request(url, json.dumps(p).encode())", "Request(build(u), body)", "Request(**kw)", "urlopen(Request(make(u)), body)",
+    "opener = urllib.request.build_opener()", "import socket", "from http.client import HTTPSConnection",
+    "import requests", "import MetaTrader5 as mt5",
+])
+def test_ast_scan_catches_request_bodies_and_network_libraries(snippet):
+    assert ast_violations(snippet), snippet
+
+
+@pytest.mark.parametrize("snippet", [
+    "with urlopen(req) as r:\n    data = r.read()",          # reading a response is fine
+    "req = Request(url, method='GET', headers=h)",
+    "data = json.loads(body)",
+])
+def test_ast_scan_has_no_false_positives_on_reads(snippet):
+    assert ast_violations(snippet) == []
+
+
+def test_package_has_no_ast_violations():
+    hits = {str(p.relative_to(ROOT)): v for p in SOURCE if (v := ast_violations(p.read_text()))}
+    assert hits == {}
 
 
 def test_scan_exempts_only_sql_trigger_clauses(tmp_path):

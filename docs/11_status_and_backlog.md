@@ -16,16 +16,16 @@
 | Risk gate (fail-closed) + R500 feasibility CLI | Done; uses PROVISIONAL spec only | `test_risk_gate.py` |
 | Indicators (SMA/EMA/Wilder/TR/ATR/RSI/BB/MACD/Stochastic/ADX/confirmed swings) + segments | Done | `test_indicators.py` (reference + look-ahead tests) |
 | Simulation rules (docs/13 v2, independently challenged) | Done | review disposition table in docs/13 |
-| Cost model + event-driven M1/M5 backtester (every entry through the risk gate) | Done (rules v2.2); **costs PROVISIONAL**; 2 independent reviews, 17 findings fixed | `test_backtest_engine.py` (hand-computed examples) |
+| Cost model + event-driven M1/M5 backtester (every entry through the risk gate, news windows, point-in-time USD/ZAR) | **Complete** (rules v2.3); **costs PROVISIONAL**; 3 independent reviews, 29 findings fixed | `test_backtest_engine.py` (hand-computed examples) |
 | Experiment ledger (append-only, schema v4), reserved test windows per instrument, one look per hypothesis | Done | `test_ledger.py`, `test_runner.py` |
-| US tier-1 event calendar (CPI, NFP, FOMC; official sources, point-in-time) | Done; **not yet used by the engine** | `test_events.py` |
-| Daily USD/ZAR (ECB reference rates, point-in-time) | Done; 709 days stored locally; **not yet used by the engine** | `test_fx.py` |
+| US tier-1 event calendar (CPI, NFP, FOMC; official sources, point-in-time) | Done; used by the engine | `test_events.py` |
+| Daily USD/ZAR (ECB reference rates, point-in-time) | Done; used by the engine | `test_fx.py` |
 | Baselines (no-trade, matched random, session-long) + R10 leakage harness | Done | `test_baselines_leakage.py` |
 | Health check (`atlas health`) | Done | `test_monitoring.py` |
 | Paper-trading simulator | Not started | — |
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
-Tests: **335 passed, 2 skipped (live, opt-in)**; the live tests pass when enabled.
+Tests: **355 passed, 2 skipped (live, opt-in)**; the live tests pass when enabled.
 Version control: git; remote https://github.com/mistreatedbee/atlas-robot (PUBLIC, by owner's decision 2026-10-11).
 
 ## Backlog (priority order)
@@ -33,7 +33,6 @@ Version control: git; remote https://github.com/mistreatedbee/atlas-robot (PUBLI
 | # | Item | Blocked? | Acceptance |
 |---|---|---|---|
 | 1 | Tick storage (Parquet, D5) + measured spread/slippage profile → replaces provisional cost values | Partly (needs Vault ticks for real values) | Round-trip + reconciliation tests; cost model built from data |
-| 2 | Engine: news no-trade windows + slippage widening from the event calendar; per-trade USD/ZAR from the FX series | No | Gating tests; no event or rate used before it was known |
 | 3 | First pre-registered gold hypotheses (momentum, pullback, range, breakout) | Needs real data to be meaningful | Pre-registration records; train/validation only until reviewed |
 | 5 | Paper-trading simulator (live-like loop on recorded data) | No | Same decisions as the backtester on identical input |
 | 6 | Broker integration research (MT5 read-only access options) | No (research only) | Written comparison; no execution code |

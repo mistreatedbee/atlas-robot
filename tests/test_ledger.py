@@ -265,3 +265,45 @@ def test_finding_10_code_version_flags_untracked_files(tmp_path):
     assert not code_version(tmp_path).endswith("+dirty")
     (tmp_path / "new_strategy.py").write_text("x = 1")
     assert code_version(tmp_path).endswith("+dirty")
+
+
+# ---- re-check 2 findings ---------------------------------------------------------------------------------
+
+def test_recheck2_1_code_fingerprint_tracks_code_content_only(tmp_path):
+    from atlas.research.ledger import code_fingerprint
+    pkg = tmp_path / "atlas"
+    (pkg / "backtest").mkdir(parents=True)
+    (pkg / "backtest" / "engine.py").write_text("x = 1\n")
+    base = code_fingerprint(pkg)
+    (tmp_path / "notes_untracked.txt").write_text("hello")          # untracked note outside the package
+    (tmp_path / "README.md").write_text("docs change")               # docs change
+    assert code_fingerprint(pkg) == base
+    (pkg / "backtest" / "costs.py").write_text("y = 2\n")             # an uncommitted code edit
+    first_edit = code_fingerprint(pkg)
+    assert first_edit != base
+    (pkg / "backtest" / "costs.py").write_text("y = 3\n")             # a different edit -> different identity
+    assert code_fingerprint(pkg) != first_edit
+
+
+def test_recheck2_2_failure_records_are_not_test_looks_or_overrides(ledger):
+    fid = ledger.record_failure(name="x", strategy="s", hypothesis_id="H-test", requested_period="test",
+                                stage="refused", config={}, error="boom", now_ms=1, cost_multiplier=2.0)
+    rec = ledger.get(fid)
+    assert (rec["period"], rec["status"], rec["test_access_override"], rec["cost_multiplier"]) == ("full", "failed", 0, 2.0)
+    assert json.loads(rec["data_selection_json"]) == {"requested_period": "test", "stage": "refused"}
+    assert ledger.test_runs("H-test") == 0
+    register(ledger, period="test")  # the hypothesis still has its single look available
+
+
+def test_recheck2_3_register_takes_the_write_lock_before_checking(tmp_path):
+    path = tmp_path / "shared.db"
+    a, b = Store(path), Store(path)
+    b.conn.execute("PRAGMA busy_timeout = 100")
+    la, lb = Ledger(a), Ledger(b)
+    a.conn.execute("BEGIN IMMEDIATE")  # process A is mid-transaction (e.g. reserving a window)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        register(lb, period="train", data_selection=sel(150, 160))  # B must wait, not read stale state
+    a.conn.execute("ROLLBACK")
+    register(lb, period="train", data_selection=sel(150, 160))
+    a.close()
+    b.close()

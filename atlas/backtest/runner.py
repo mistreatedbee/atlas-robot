@@ -13,7 +13,7 @@ from pathlib import Path
 from ..brokers.spec import SpecStatus, load_spec
 from ..ingest import system_clock_ms
 from ..models import timeframe_ms
-from ..research.ledger import Ledger, LedgerError, code_version, hash_candles, sha256_json
+from ..research.ledger import Ledger, LedgerError, code_fingerprint, hash_candles, sha256_json
 from ..research.splits import DAY_MS, Period, Splits, required_embargo_ms
 from ..risk.gate import RiskLimits
 from ..sessions import XauCfd
@@ -150,25 +150,22 @@ def load_experiment_recorded(store: Store, path: str | Path, root: Path, period_
                 hypothesis = tomllib.load(fh).get("hypothesis_id") or "unknown"
         except Exception:
             pass
-        ledger = Ledger(store)
-        exp_id, _ = ledger.register(name=str(path), strategy="unknown", hypothesis_id=hypothesis,
-                                    period=period_name if period_name in ("train", "validation", "test") else "full",
-                                    config={"config_path": str(path), "stage": "load"},
-                                    data_selection={"period": period_name}, cost_status="unknown",
-                                    spec_label="unavailable", now_ms=system_clock_ms(), allow_repeat_test=True,
-                                    cost_multiplier=1.0)
-        ledger.fail(exp_id, error=f"load: {type(exc).__name__}: {exc}", now_ms=system_clock_ms())
+        Ledger(store).record_failure(name=str(path), strategy="unknown", hypothesis_id=hypothesis,
+                                     requested_period=period_name, stage="load",
+                                     config={"config_path": str(path)}, error=f"{type(exc).__name__}: {exc}",
+                                     now_ms=system_clock_ms())
         raise ExperimentError(f"experiment config could not be loaded (recorded in the ledger): {exc}") from exc
 
 
-def _register_setup_failure(ledger: Ledger, exp: Experiment, period_name: str, exc: BaseException) -> str:
-    """Finding 9: failures before a run starts (bad spec, limits, params, multiplier) are recorded too."""
-    exp_id, _ = ledger.register(name=exp.name, strategy=exp.strategy_name, hypothesis_id=exp.hypothesis_id,
-                                period=period_name, config={"raw_experiment": exp.raw, "stage": "setup"},
-                                data_selection={"period": period_name}, cost_status="unknown",
-                                spec_label="unavailable", now_ms=system_clock_ms(), allow_repeat_test=True)
-    ledger.fail(exp_id, error=f"setup: {type(exc).__name__}: {exc}", now_ms=system_clock_ms())
-    return exp_id
+def _register_setup_failure(ledger: Ledger, exp: Experiment, period_name: str, exc: BaseException,
+                            cost_multiplier: float = 1.0) -> str:
+    """Failures before a run reaches the data (bad spec/limits/params, guard refusals) are recorded too, but never
+    as a test-set look or override (Ledger.record_failure)."""
+    stage = "refused" if isinstance(exc, LedgerError) else "setup"
+    return ledger.record_failure(name=exp.name, strategy=exp.strategy_name, hypothesis_id=exp.hypothesis_id,
+                                 requested_period=period_name, stage=stage, config={"raw_experiment": exp.raw},
+                                 error=f"{type(exc).__name__}: {exc}", now_ms=system_clock_ms(),
+                                 cost_multiplier=cost_multiplier)
 
 
 def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_multiplier: float = 1.0,
@@ -190,14 +187,14 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
         strategy = strategy_override or build_strategy(exp.strategy_name, exp.strategy_params)
         extras, extras_provenance = engine_extras(store, exp)
     except Exception as exc:
-        _register_setup_failure(ledger, exp, period_name, exc)
+        _register_setup_failure(ledger, exp, period_name, exc, cost_multiplier)
         raise ExperimentError(f"setup failed (recorded in the ledger): {type(exc).__name__}: {exc}") from exc
     cost_status = "verified" if (spec.status is SpecStatus.VERIFIED and costs.status == "verified") \
         else "provisional_dev"
     base_config = {
         "strategy_params": strategy.params(), "engine": exp.engine.__dict__, "base_costs": base_costs.as_dict(),
         "risk_limits": limits.__dict__, "spec_sha256": spec.file_sha256, "rules": "docs/13_simulation_rules.md v2.1",
-        "warmup_bars": exp.warmup_bars, "code_version": code_version(),  # a code change = a new look
+        "warmup_bars": exp.warmup_bars, "code_fingerprint": code_fingerprint(),  # a code change = a new look
         **extras_provenance,
     }
     selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
@@ -212,7 +209,7 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
                                     allow_repeat_test=allow_repeat_test,
                                     reserve_test_window=(test.start_ms, test.end_ms))
     except LedgerError as exc:  # refusals (reservation conflict, test-set guard) are recorded too
-        _register_setup_failure(ledger, exp, period_name, exc)
+        _register_setup_failure(ledger, exp, period_name, exc, cost_multiplier)
         raise
     try:
         candles = _candles(store, exp, period)

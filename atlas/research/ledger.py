@@ -64,6 +64,38 @@ def code_version(repo: Path | None = None) -> str:
         return f"{__version__}+unknown"
 
 
+def code_fingerprint(package_dir: Path | None = None) -> str:
+    """SHA-256 of the CONTENT of every atlas/**/*.py file as it is on disk now. Unlike the git commit, it changes
+    exactly when the code that runs experiments changes: not for docs commits or untracked notes, but yes for
+    uncommitted edits. Used to define a test-set "look"."""
+    root = package_dir or Path(__file__).resolve().parents[1]
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*.py")):
+        if "__pycache__" in f.parts:
+            continue
+        h.update(str(f.relative_to(root)).encode())
+        h.update(b"\0")
+        h.update(f.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+class _Immediate:
+    """BEGIN IMMEDIATE transaction: takes the write lock BEFORE the checks, so concurrent processes cannot both
+    pass a check and then write conflicting rows."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        self.conn.execute("BEGIN IMMEDIATE")
+        return self.conn
+
+    def __exit__(self, exc_type, exc, tb):
+        self.conn.execute("ROLLBACK" if exc_type else "COMMIT")
+        return False
+
+
 SERIES_KEYS = ("instrument", "provider", "venue", "timeframe")
 STRESS_MULTIPLIERS = (1.0, 1.5, 2.0)  # the only cost multipliers allowed on the test set (docs/13 R5.4)
 ANY = "*"
@@ -95,7 +127,12 @@ class Ledger:
             rows = [r for r in self._test_experiments() if r["period"] == "test"]
         except Exception:  # tables not created yet in an unusual state: nothing to backfill
             return
-        with self.conn:
+        have = {(w["instrument_id"], w["start_ms"], w["end_ms"])
+                for w in self.conn.execute("SELECT instrument_id, start_ms, end_ms FROM reserved_test_windows")}
+        rows = [r for r in rows if (r["instrument"], r["start_ms"], r["end_ms"]) not in have]
+        if not rows:
+            return  # nothing to back-fill: opening the ledger does not write
+        with _Immediate(self.conn):
             for r in rows:
                 self.conn.execute("INSERT OR IGNORE INTO reserved_test_windows VALUES (?,?,?,?,?,?,?,?)",
                                   (r["instrument"], ANY, ANY, ANY, r["start_ms"], r["end_ms"], r["hypothesis_id"],
@@ -118,6 +155,7 @@ class Ledger:
                           (instrument, ANY, ANY, ANY, start_ms, end_ms, hypothesis_id, now_ms))
 
     def test_runs(self, hypothesis_id: str) -> int:
+        """Registered test-period runs of a hypothesis (failure records are stored as 'full' and never count)."""
         return self.conn.execute(
             "SELECT COUNT(*) FROM experiments WHERE hypothesis_id=? AND period='test'", (hypothesis_id,)
         ).fetchone()[0]
@@ -140,7 +178,7 @@ class Ledger:
         instrument = data_selection.get("instrument")
         has_range = instrument is not None and "start_ms" in data_selection
         exp_id = str(uuid.uuid4())
-        with self.conn:  # one transaction: reservation + checks + insert
+        with _Immediate(self.conn):  # one locked transaction: reservation + checks + insert
             if reserve_test_window is not None:
                 if instrument is None:
                     raise LedgerError("a test window can only be reserved for a known instrument")
@@ -188,6 +226,24 @@ class Ledger:
                  look_key, cost_multiplier),
             )
         return exp_id, config_sha
+
+    def record_failure(self, *, name: str, strategy: str, hypothesis_id: str, requested_period: str, stage: str,
+                       config: dict, error: str, now_ms: int, cost_multiplier: float = 1.0) -> str:
+        """A run that never reached the data (load/setup failure, or a refusal by the guards). Stored as a failed
+        experiment with period 'full', no data range and no override flag, so it can never count as a test-set
+        look, consume a reservation or be mistaken for an override."""
+        exp_id = str(uuid.uuid4())
+        selection = {"requested_period": requested_period, "stage": stage}
+        with _Immediate(self.conn):
+            self.conn.execute(
+                """INSERT INTO experiments (experiment_id, created_at_utc, finished_at_utc, name, strategy,
+                     hypothesis_id, period, status, config_json, config_sha256, data_selection_json, cost_status,
+                     spec_label, code_version, test_access_override, look_key, cost_multiplier, error)
+                   VALUES (?,?,?,?,?,?,'full','failed',?,?,?,'unknown','unavailable',?,0,NULL,?,?)""",
+                (exp_id, now_ms, now_ms, name, strategy, hypothesis_id or "unknown", canonical_json(config),
+                 sha256_json(config), canonical_json(selection), code_version(), cost_multiplier,
+                 f"{stage}: {error}"[:2000]))
+        return exp_id
 
     def complete(self, exp_id: str, *, data_sha256: str, data_label: str, metrics: dict, trades: Iterable[dict],
                  events: Iterable[dict], now_ms: int) -> str:

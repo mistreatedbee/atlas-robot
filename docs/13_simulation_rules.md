@@ -133,7 +133,7 @@ losses.*
    - Once reserved, no train or validation run may overlap it.
    - Test runs recorded before reservations existed have their windows back-filled.
 5. **One look per hypothesis (v2.2).** A hypothesis gets one *look* at the test set. A look is its configuration,
-   including the **code version**, without the cost multiplier. Only the ×1.5 and ×2 stress runs belong to the same
+   including a **content fingerprint of the `atlas/` code** (v2.3; not the git commit), without the cost multiplier. Only the ×1.5 and ×2 stress runs belong to the same
    look, once each; other multipliers are refused on the test set.
    - A different configuration, or an exact repeat, is refused unless overridden, and the override is recorded.
 6. **Prior looks are recorded (v2.2).** Every test run records how many *other* looks overlapping windows have
@@ -219,3 +219,13 @@ For ≥ 20 cut points T (including cuts adjacent to closures):
 | 9 | Config-load failures were not recorded | `load_experiment_recorded` |
 | 4 | Pre-v4 test runs had no reservation | Back-filled on open |
 | 2 | Static scan limits | Static scanning can always be dodged by building strings; the behavioural GET-only test is the backstop |
+
+## Re-check 2 disposition (verification of commit a0a427c in an isolated worktree)
+| # | Finding | Fix |
+|---|---|---|
+| 1 | The git HEAD + dirty flag was a poor "look" identity: docs commits split stress runs, different uncommitted edits looked identical | Look uses a SHA-256 over the content of every `atlas/**/*.py` file |
+| 2 | Refusal and load-failure records were stored as test-period overrides with the wrong multiplier | `Ledger.record_failure`: period `full`, no data range, override 0, requested multiplier |
+| 3 | Reservations and research runs could race across processes | `register` and the back-fill run under `BEGIN IMMEDIATE` |
+| 4 / E | Regex scan had false positives and bypasses for request bodies | Replaced by a syntax-tree check (Request/urlopen bodies, custom openers, raw network/trading imports); word scan kept |
+| 5 | A test run that registers and then fails before producing results still uses up the look | Kept deliberately: conservative, because the run may already have read the data |
+| 5 | Opening the ledger always wrote | The back-fill writes only when rows are missing |
