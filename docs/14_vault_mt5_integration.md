@@ -76,6 +76,18 @@ The automated test suite runs on **Windows, macOS and Linux** (Python 3.11–3.1
      picked up by the next run, and no decision is ever filled twice.
    - **Kill switch:** create the file `data\KILL_SWITCH` to block all new entries.
 
+6. **Unattended running (optional):** the supervisor restarts paper sessions after crashes, writes
+   `logs\heartbeat.json` and alerts to `logs\alerts.jsonl`, and stops after 5 crashes in a row.
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\windows\start_atlas_paper.ps1       # run now
+   powershell -ExecutionPolicy Bypass -File scripts\windows\install_autostart.ps1       # start at every logon
+   .venv\Scripts\atlas health                                                           # 0 ok / 1 warn / 2 critical
+   ```
+   - **Stop cleanly:** create the file `data\STOP_ATLAS`.
+   - **Remove auto-start:** `Unregister-ScheduledTask -TaskName "Atlas paper trading" -Confirm:$false`.
+   - **Not yet built:** alerts to your phone or email. That needs a messaging account you choose, with its secret
+     kept outside the repo.
+
 ### macOS / Linux setup
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/python -m pytest -q

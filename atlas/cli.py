@@ -228,6 +228,9 @@ def cmd_health(settings, args) -> int:
         rep = check_health(store, now_ms=system_clock_ms(), kill_switch=KillSwitch(settings.root / args.kill_switch),
                            calendars={i.instrument_id: i.session_calendar for i in settings.instruments.values()},
                            max_data_age_minutes=args.max_data_age_minutes)
+    from .monitoring import check_heartbeat
+    check_heartbeat(rep, settings.root / "logs" / "heartbeat.json", system_clock_ms(),
+                    max_age_minutes=args.session_minutes_max)
     for f in rep.findings:
         print(f"{f.level.upper():<8} {f.check:<12} {f.detail}")
     print(f"overall: {rep.level}")
@@ -393,6 +396,23 @@ def cmd_spread_profile(settings, args) -> int:
     return 0
 
 
+def cmd_supervise(settings, args) -> int:
+    """Run `paper-run` sessions back to back with crash restarts, heartbeat and a stop file (paper only)."""
+    from .supervisor import Supervisor
+
+    def job() -> int:
+        return main(["--config", str(args.config), "paper-run", "--experiment", args.experiment,
+                     "--minutes", str(args.session_minutes), "--server-time-model", args.server_time_model]
+                    + (["--equity-from-account"] if args.equity_from_account else []))
+
+    sup = Supervisor(job, heartbeat=settings.root / "logs" / "heartbeat.json",
+                     alerts=settings.root / "logs" / "alerts.jsonl", stop_file=settings.root / args.stop_file,
+                     max_consecutive_crashes=args.max_crashes)
+    res = sup.run()
+    print(f"supervisor: {res.runs} runs, {res.crashes} crashes, stopped by {res.stopped_by}")
+    return 0 if res.stopped_by != "max_crashes" else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -454,6 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
     hl = sub.add_parser("health", help="operational health check (exit 0 ok, 1 warn, 2 critical)")
     hl.add_argument("--max-data-age-minutes", type=float, help="staleness threshold in trading minutes (real data only)")
     hl.add_argument("--kill-switch", default="data/KILL_SWITCH")
+    hl.add_argument("--session-minutes-max", type=float, default=300,
+                    help="heartbeat older than this while 'running' is critical (sessions write one per start)")
 
     fx = sub.add_parser("fx-update", help="fetch daily USD/ZAR from ECB reference rates (no credentials)")
     fx.add_argument("--start", required=True)
@@ -488,6 +510,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reopen-minutes", type=int, default=15)
     sp.add_argument("--tick-size", type=float, default=0.01, help="from the verified spec")
 
+    sv = sub.add_parser("supervise", help="unattended PAPER trading: restarts, heartbeat, stop file (Windows)")
+    sv.add_argument("--experiment", required=True)
+    sv.add_argument("--session-minutes", type=float, default=240)
+    sv.add_argument("--server-time-model", default="ny_close_midnight")
+    sv.add_argument("--equity-from-account", action="store_true")
+    sv.add_argument("--stop-file", default="data/STOP_ATLAS")
+    sv.add_argument("--max-crashes", type=int, default=5)
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -496,7 +526,8 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
             "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check,
-            "paper-run": cmd_paper_run, "import-ticks": cmd_import_ticks, "spread-profile": cmd_spread_profile, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "paper-run": cmd_paper_run, "import-ticks": cmd_import_ticks, "spread-profile": cmd_spread_profile,
+            "supervise": cmd_supervise, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:

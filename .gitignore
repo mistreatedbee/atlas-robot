@@ -13,3 +13,4 @@ logs/
 *.key
 secrets/
 data/KILL_SWITCH
+data/STOP_ATLAS

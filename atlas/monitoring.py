@@ -49,6 +49,28 @@ def _calendar_minutes_open(calendar, start_ms: int, end_ms: int) -> int:
     return sum(1 for t in range(start_ms, end_ms, step) if calendar.bar_in_session(t, t + step))
 
 
+def check_heartbeat(rep: HealthReport, heartbeat_path, now_ms: int, max_age_minutes: float) -> None:
+    """Unattended operation: the supervisor's heartbeat must be recent while it claims to be running."""
+    from pathlib import Path
+    path = Path(heartbeat_path)
+    if not path.exists():
+        rep.add("ok", "heartbeat", "no supervisor heartbeat (not running unattended)")
+        return
+    try:
+        hb = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        rep.add("critical", "heartbeat", f"unreadable heartbeat: {exc}")
+        return
+    age = (now_ms - int(hb.get("ts_ms", 0))) / 60_000
+    state = hb.get("state")
+    if state == "failed":
+        rep.add("critical", "heartbeat", "supervisor gave up after repeated crashes (see logs/alerts.jsonl)")
+    elif state in ("running", "backoff") and age > max_age_minutes:
+        rep.add("critical", "heartbeat", f"supervisor state '{state}' but last heartbeat {age:.1f} min ago")
+    else:
+        rep.add("ok", "heartbeat", f"supervisor {state}, {age:.1f} min ago")
+
+
 def check_health(store: Store, *, now_ms: int, kill_switch: KillSwitch, calendars: dict[str, str],
                  max_data_age_minutes: float | None = None) -> HealthReport:
     rep = HealthReport()
