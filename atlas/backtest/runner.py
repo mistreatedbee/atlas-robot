@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import tomllib
@@ -18,7 +19,9 @@ from ..risk.gate import RiskLimits
 from ..sessions import XauCfd
 from ..storage import Store
 from .costs import CostModel
-from .engine import EngineConfig, run_backtest
+from ..events import EventCalendar
+from ..fx import FxSeries
+from .engine import EngineConfig, NewsRules, run_backtest
 from .metrics import compute_metrics
 from .strategies import NoTrade, RandomEntry, SessionLong, matched_hourly_probabilities
 
@@ -51,6 +54,8 @@ class Experiment:
     spec_path: Path
     limits_path: Path
     warmup_bars: int
+    news: dict | None = None  # [news] section (None = no news handling)
+    fx_source: str = "constant"  # "constant" (cost model rate) | "ecb_series"
 
 
 def load_experiment(path: str | Path, root: Path) -> Experiment:
@@ -84,11 +89,37 @@ def load_experiment(path: str | Path, root: Path) -> Experiment:
         strat = raw["strategy"]
         if strat["name"] not in STRATEGIES:
             raise ExperimentError(f"unknown strategy {strat['name']!r}; known {sorted(STRATEGIES)}")
+        news = raw.get("news")
+        if news is not None and not news.get("enabled", True):
+            news = None
+        if news is not None:
+            news = {**news, "calendar": str(root / news["calendar"])}
+        fx_source = raw.get("fx", {}).get("source", "constant")
+        if fx_source not in ("constant", "ecb_series"):
+            raise ExperimentError(f"[fx] source must be 'constant' or 'ecb_series', got {fx_source!r}")
         return Experiment(path, raw, raw["name"], raw["hypothesis_id"], data, splits, strat["name"],
                           dict(strat.get("params", {})), engine, costs, root / raw["spec"],
-                          root / raw.get("risk_limits", "config/risk.toml"), lookback)
+                          root / raw.get("risk_limits", "config/risk.toml"), lookback, news, fx_source)
     except KeyError as exc:
         raise ExperimentError(f"{path}: missing key {exc}") from None
+
+
+def engine_extras(store: Store, exp: Experiment) -> tuple[dict, dict]:
+    """Optional engine inputs (news calendar + rules, FX series) and their provenance for the ledger."""
+    kwargs, provenance = {}, {"fx_source": exp.fx_source, "news": None}
+    if exp.news is not None:
+        n = exp.news
+        path = Path(n["calendar"])
+        kwargs["events_calendar"] = EventCalendar.load(path)
+        kwargs["news"] = NewsRules(before_ms=int(n.get("before_minutes", 15) * 60_000),
+                                   after_ms=int(n.get("after_minutes", 15) * 60_000),
+                                   slippage_multiplier=float(n.get("slippage_multiplier", 3.0)),
+                                   flat_before=bool(n.get("flat_before", True)), max_tier=int(n.get("max_tier", 1)))
+        provenance["news"] = {**{k: v for k, v in n.items() if k != "calendar"}, "calendar_file": path.name,
+                              "calendar_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    if exp.fx_source == "ecb_series":
+        kwargs["fx_series"] = FxSeries.load(store)
+    return kwargs, provenance
 
 
 def build_strategy(name: str, params: dict):
@@ -157,6 +188,7 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
         base_costs.validate(spec.symbol.tick_size or 0.0)
         costs = base_costs.scaled(cost_multiplier) if cost_multiplier != 1.0 else base_costs
         strategy = strategy_override or build_strategy(exp.strategy_name, exp.strategy_params)
+        extras, extras_provenance = engine_extras(store, exp)
     except Exception as exc:
         _register_setup_failure(ledger, exp, period_name, exc)
         raise ExperimentError(f"setup failed (recorded in the ledger): {type(exc).__name__}: {exc}") from exc
@@ -166,6 +198,7 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
         "strategy_params": strategy.params(), "engine": exp.engine.__dict__, "base_costs": base_costs.as_dict(),
         "risk_limits": limits.__dict__, "spec_sha256": spec.file_sha256, "rules": "docs/13_simulation_rules.md v2.1",
         "warmup_bars": exp.warmup_bars, "code_version": code_version(),  # a code change = a new look
+        **extras_provenance,
     }
     selection = {**series, "period": period_name, "start_ms": period.start_ms, "end_ms": period.end_ms}
     look_key = sha256_json({"config": base_config, "selection": selection, "strategy": strategy.name})
@@ -184,7 +217,7 @@ def run_experiment(store: Store, exp: Experiment, period_name: str, *, cost_mult
     try:
         candles = _candles(store, exp, period)
         result = run_backtest(candles, strategy, spec=spec, limits=limits, costs=costs, calendar=XauCfd(),
-                              config=exp.engine, trade_start_ms=period.start_ms, trade_end_ms=period.end_ms)
+                              config=exp.engine, trade_start_ms=period.start_ms, trade_end_ms=period.end_ms, **extras)
         metrics = compute_metrics(result)
         labels = sorted(store.data_labels_in(series["instrument"], series["provider"], series["venue"],
                                              series["timeframe"], candles[0].open_time, candles[-1].close_time))
@@ -222,11 +255,12 @@ def matched_random_percentile(store: Store, exp: Experiment, period_name: str, *
     period = exp.splits.get(period_name)
     spec, limits = load_spec(exp.spec_path), RiskLimits.load(exp.limits_path)
     candles = _candles(store, exp, period)
+    extras, _ = engine_extras(store, exp)  # the random entries face the same news and FX rules
     pnls = []
     for seed in range(seeds):
         r = run_backtest(candles, RandomEntry(seed=seed, p_by_hour=probs, stop_usd=stop_usd, tp_usd=tp_usd),
                          spec=spec, limits=limits, costs=exp.costs, calendar=XauCfd(), config=exp.engine,
-                         trade_start_ms=period.start_ms, trade_end_ms=period.end_ms)
+                         trade_start_ms=period.start_ms, trade_end_ms=period.end_ms, **extras)
         pnls.append(r.equity_curve[-1][1] - r.initial_equity)
     below = sum(p < m["net_pnl"] for p in pnls)
     ties = sum(p == m["net_pnl"] for p in pnls)

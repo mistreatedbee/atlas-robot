@@ -301,3 +301,76 @@ def test_recheck_B_closure_exit_is_capped_at_take_profit():
             bar(utc_ms(2026, 7, 14, 22, 0), 2420, 2420.5, 2419.5, 2420)]   # gaps far beyond the TP
     (t,) = run(bars, {0: Signal("buy", 10.0, 5.0)}).trades
     assert (t.exit_reason, t.exit_price) == ("tp_gap", t.tp)
+
+
+# ---- news windows and point-in-time FX (rules v2.3) ------------------------------------------------------
+
+from atlas.backtest.engine import NewsRules  # noqa: E402
+from atlas.events import EconEvent, EventCalendar  # noqa: E402
+from atlas.fx import FxSeries  # noqa: E402
+
+MIN = 60_000
+
+
+def cal_with(release, known_since=None):
+    return EventCalendar([EconEvent("CPI-test", "CPI", 1, "x", release,
+                                    known_since if known_since is not None else release - 86_400_000, "test", "")])
+
+
+def run_news(bars, signals, calendar, rules=NewsRules(), fx=None, equity=100_000.0):
+    return run_backtest(bars, Scripted(signals), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
+                        config=EngineConfig(initial_equity=equity), events_calendar=calendar, news=rules,
+                        fx_series=fx)
+
+
+def flat_bars(n, start=T0, price=2400.0):
+    return [bar(start + k * M5, price, price + 0.5, price - 0.5, price) for k in range(n)]
+
+
+def test_news_window_blocks_entries_only_for_known_events():
+    bars = flat_bars(6)
+    release = T0 + M5 + 10 * MIN  # fill bar opens 10 min before the release -> inside the 15-min window
+    r = run_news(bars, {0: Signal("buy", 2.0, 3.0)}, cal_with(release))
+    assert r.trades == [] and [e.detail for e in r.events if e.kind == "blocked_news"] == ["CPI-test"]
+    # the same release, but only "known" after the fill time: not blocked (point-in-time)
+    r2 = run_news(bars, {0: Signal("buy", 2.0, 3.0)}, cal_with(release, known_since=T0 + 2 * M5))
+    assert len(r2.trades) == 1
+
+
+def test_flat_before_news_and_news_slippage():
+    bars = flat_bars(12)
+    release = T0 + 9 * M5  # 10:45; the window opens at 10:30
+    r = run_news(bars, {0: Signal("buy", 5.0, None)}, cal_with(release))
+    (t,) = r.trades
+    # bar 5 closes at 10:30 = release - 15 min -> exit at that close; that time is inside the window -> slip x3
+    assert t.exit_reason == "news_exit" and t.exit_time == T0 + 6 * M5
+    assert t.exit_price == pytest.approx(2400.0 - 0.10 * 3)
+    r_off = run_news(bars, {0: Signal("buy", 5.0, None)}, cal_with(release), rules=NewsRules(flat_before=False))
+    assert r_off.trades[0].exit_reason == "end_of_data"
+
+
+def test_news_rules_validation():
+    with pytest.raises(ValueError):
+        NewsRules(slippage_multiplier=0.5)
+    with pytest.raises(ValueError, match="both"):
+        run_backtest(flat_bars(3), Scripted({}), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
+                     config=EngineConfig(initial_equity=1e5), events_calendar=cal_with(T0))
+
+
+def test_fx_series_used_for_sizing_and_conversion_point_in_time():
+    bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.41, 2400.9, 2403.0)]
+    # rate 10 available before the entry; rate 20 published between entry (10:05) and exit (10:15)
+    fx = FxSeries("USDZAR", [T0 - 86_400_000, T0 + 2 * M5 + MIN], [10.0, 20.0])
+    r = run_backtest(bars, Scripted(BUY), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
+                     config=EngineConfig(initial_equity=100_000.0), fx_series=fx)
+    (t,) = r.trades
+    assert t.fx_entry == 10.0 and t.lots == pytest.approx(0.41)      # sized with the rate known at entry
+    assert t.fx_exit == 20.0 and t.net_account == pytest.approx(123.0 * 20)  # converted at the exit-time rate
+    assert r.fx_source.startswith("ECB")
+
+
+def test_missing_fx_rate_blocks_entry():
+    fx = FxSeries("USDZAR", [T0 + 10 * M5], [10.0])  # nothing published before the fill
+    r = run_backtest(base_bars() + flat_bars(2, start=T0 + 2 * M5), Scripted(BUY), spec=SPEC, limits=LIMITS,
+                     costs=COSTS, calendar=XauCfd(), config=EngineConfig(initial_equity=1e5), fx_series=fx)
+    assert r.trades == [] and [e.kind for e in r.events if e.kind == "blocked_fx"] == ["blocked_fx"]

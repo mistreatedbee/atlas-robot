@@ -1,4 +1,4 @@
-# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.2
+# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.3
 
 *Author: quantitative researcher role. v1 was challenged by the independent reviewer (15 findings). This v2 adopts
 them as recorded in the table at the end. Where a rule could go either way, it leans toward overstating costs and
@@ -32,6 +32,10 @@ losses.*
    - within `reopen_minutes` after a reopen.
 
    These are recorded as `blocked_window`.
+6. **News no-entry window (v2.3).** No entry fills while a tier-1 US release (CPI, NFP, FOMC, from
+   `config/events/us_tier1.csv`) is less than `news.before` away or less than `news.after` past (default 15 min / 15 min).
+   Only events **known at the fill time** count (their `known_since` ≤ fill time). Blocked entries are recorded as
+   `blocked_news` with the event id.
 5. **One combined exposure:**
    - At most one position or pending order at a time.
    - Signals that arrive while one exists are recorded as `ignored_in_position` / `ignored_pending`.
@@ -87,17 +91,27 @@ losses.*
    minutes before 17:00 New York are missing, the position is closed at the **open of the first bar after the
    closure**: bid_open − slippage for a long, ask_open + slippage for a short. The reason is `held_through_closure`.
    The gap risk is borne, never avoided. A gap through the take-profit still fills at the take-profit (v2.2).
+9. **Flat before news (v2.3, default on).** At a bar close, if a known release starts within `news.before`, the
+   position is closed at that close (`news_exit`), with news slippage.
 8. **Entry bar (v2.1).** R4.1 also applies on the entry bar. A stop inside the spread is hit at that bar's open and
    is never filled better than the market.
 
 ## R5 Costs and currency
 1. Spread is implicit in bid/ask fills. Slippage applies to market, stop and time exits.
 2. Commission comes from the spec, per lot round turn; half is charged at entry and half at exit.
-3. Results are computed in USD and converted to the account currency at a **constant** configured rate.
-   - This is an assumption. Lot sizing over long spans would really vary with USD/ZAR.
-   - A daily FX series is on the backlog.
+3. **FX (v2.3).** Results are computed in USD and converted to the account currency.
+   - **With `[fx] source = "ecb_series"`:**
+     - Sizing and entry commission use the USD/ZAR rate published before the entry. ECB reference rates count as
+       available from 17:00 Berlin.
+     - Realised P&L and exit commission use the rate published before the exit.
+     - Mark-to-market uses the rate published before each bar close.
+     - If no published rate exists, entries are refused (`blocked_fx`), and a run that cannot convert an exit fails.
+   - **With `"constant"`:** the cost-model rate is used, labelled as an assumption.
+   - ECB reference rates are not the broker's conversion rates. That is a limitation.
    - Both USD and account-currency P&L are reported.
 4. Stress runs scale spread and slippage by ×1.5 and ×2.
+5. **News slippage (v2.3).** Slippage is multiplied by `news.slippage_multiplier` (default ×3, PROVISIONAL) for
+   any fill on a bar that overlaps a known release window. Time exits use the multiplier if the close is inside a window.
 
 ## R6 Account
 1. **Starting equity:** from configuration.

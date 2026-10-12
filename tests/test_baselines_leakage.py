@@ -148,3 +148,18 @@ class HoldsLong:
 def test_leakage_test_has_no_false_positive_for_open_positions_at_the_cut(sample):
     data = sample[:1200]
     assert check_no_lookahead(HoldsLong, data, _cuts(data), **kwargs()) == []
+
+
+def test_news_and_fx_keep_the_engine_leak_free(sample):
+    from atlas.backtest.engine import NewsRules
+    from atlas.events import EventCalendar
+    from atlas.fx import FxSeries
+    cal = EventCalendar.load(ROOT / "config/events/us_tier1.csv")
+    days = range(utc_ms(2026, 7, 31), utc_ms(2026, 8, 30), 86_400_000)
+    fx = FxSeries("USDZAR", list(days), [16.0 + 0.01 * k for k in range(len(days))])  # test-only rates
+    data = sample[:2400]
+    kw = {**kwargs(), "events_calendar": cal, "news": NewsRules(), "fx_series": fx}
+    make = lambda: RandomEntry(seed=11, p=0.05, stop_usd=2.0, tp_usd=3.0)
+    r = run_backtest(data, make(), **kw)
+    assert any(e.kind == "blocked_news" for e in r.events)  # NFP 7 Aug 2026 12:30 UTC lies in the sample
+    assert check_no_lookahead(make, data, _cuts(data), **kw) == []

@@ -24,6 +24,11 @@ def store(tmp_path_factory):
     s.upsert_instruments([gold], 0)
     ingest(s, build_provider(settings.provider("sample_synthetic"), settings.root), gold, "M5",
            utc_ms(2026, 8, 2, 22), utc_ms(2026, 8, 28, 21), clock=FixedClock(utc_ms(2026, 10, 11)))
+    # TEST-ONLY USD/ZAR rates (not ECB data) covering the sample, so no network is needed
+    from datetime import date, timedelta
+    from atlas.fx import store_rates
+    days = [(date(2026, 7, 27) + timedelta(days=k)).isoformat() for k in range(40)]
+    store_rates(s, "USDZAR", [(d, 16.5) for d in days], now_ms=0)
     yield s
     s.close()
 
@@ -150,3 +155,22 @@ def test_recheck_unloadable_config_is_recorded(store, tmp_path):
         load_experiment_recorded(store, bad, ROOT, "validation")
     rec = Ledger(store).list(1)[0]
     assert rec["status"] == "failed" and rec["hypothesis_id"] == "H-broken" and rec["error"].startswith("load:")
+
+
+def test_news_and_fx_are_used_and_recorded(store):
+    exp_id, m = run_experiment(store, exp("baseline_session_long_sample"), "train")
+    cfg = json.loads(Ledger(store).get(exp_id)["config_json"])
+    assert cfg["fx_source"] == "ecb_series" and m["fx_source"].startswith("ECB")
+    assert cfg["news"]["calendar_file"] == "us_tier1.csv" and len(cfg["news"]["calendar_sha256"]) == 64
+    # session-long holds all day, so the NFP release of Fri 7 Aug 2026 (12:30 UTC) forces a pre-news exit
+    news_exits = [t for t in Ledger(store).trades(exp_id) if t["exit_reason"] == "news_exit"]
+    assert [t["exit_time"] for t in news_exits] == [utc_ms(2026, 8, 7, 12, 15)]
+
+
+def test_missing_fx_rates_fail_closed_and_are_recorded(tmp_path):
+    from atlas.config import load_settings
+    s = Store(tmp_path / "empty.db")
+    with pytest.raises(ExperimentError, match="FxError"):
+        run_experiment(s, exp("baseline_no_trade_sample"), "train")
+    assert Ledger(s).list(1)[0]["status"] == "failed"
+    s.close()

@@ -36,3 +36,14 @@ slippage_usd = 0.10
 usd_to_account = 16.6
 status = "provisional_dev"
 sources = ["spread/slippage: provisional assumption", "USDZAR ~16.6 implied from VALR/Coinbase 2026-10-11 (approx., constant)"]
+
+[news]                         # docs/13 R2.6 / R4.9 / R5.7; slippage multiplier PROVISIONAL
+enabled = true
+calendar = "config/events/us_tier1.csv"
+before_minutes = 15
+after_minutes = 15
+slippage_multiplier = 3.0
+flat_before = true
+
+[fx]
+source = "ecb_series"          # point-in-time daily USD/ZAR (run `atlas fx-update` first); "constant" uses costs.usd_to_account

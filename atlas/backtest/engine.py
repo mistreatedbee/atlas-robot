@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
 from ..brokers.spec import BrokerSpec
+from ..events import EventCalendar
+from ..fx import FxError, FxSeries
 from ..models import Candle, PriceBasis, timeframe_ms
 from ..risk.gate import AccountState, CostInputs, Mode, RiskLimits, TradeIntent, evaluate
 from ..sessions import XauCfd, is_open_at, trading_day
@@ -58,6 +60,23 @@ class EngineConfig:
             raise ValueError("max_hold_bars must be >= 1")
 
 
+@dataclass(frozen=True)
+class NewsRules:
+    """docs/13 R2.6 / R4.9 / R5.7: behaviour around scheduled tier-1 releases (events known at the time only)."""
+
+    before_ms: int = 15 * MINUTE_MS
+    after_ms: int = 15 * MINUTE_MS
+    slippage_multiplier: float = 3.0  # PROVISIONAL until measured from Vault ticks around releases
+    flat_before: bool = True
+    max_tier: int = 1
+
+    def __post_init__(self):
+        if self.before_ms < 0 or self.after_ms < 0:
+            raise ValueError("news window lengths must be >= 0")
+        if self.slippage_multiplier < 1:
+            raise ValueError("news slippage multiplier below 1 would understate costs")
+
+
 @dataclass
 class Trade:
     side: str
@@ -81,6 +100,8 @@ class Trade:
     net_account: float = 0.0
     r_multiple: float = 0.0
     trading_day: str = ""
+    fx_entry: float = 0.0  # USD -> account currency rate used at entry (sizing, entry commission)
+    fx_exit: float = 0.0  # rate used to convert the realised P&L at exit
 
     def record(self) -> dict:
         return asdict(self)
@@ -105,6 +126,7 @@ class BacktestResult:
     decision_bars_by_hour: dict[int, int]  # in-period bars at whose close the strategy was asked to decide
     initial_equity: float
     usd_to_account: float
+    fx_source: str = "constant"
     stopped_early: str | None = None
 
 
@@ -141,6 +163,9 @@ def run_backtest(
     config: EngineConfig,
     trade_start_ms: int | None = None,
     trade_end_ms: int | None = None,
+    events_calendar: EventCalendar | None = None,
+    news: NewsRules | None = None,
+    fx_series: FxSeries | None = None,
 ) -> BacktestResult:
     if not candles:
         raise ValueError("no candles")
@@ -155,7 +180,8 @@ def run_backtest(
     sym = spec.symbol
     tick, oz = sym.tick_size, sym.contract_size
     costs.validate(tick)
-    fx = costs.usd_to_account
+    if (events_calendar is None) != (news is None):
+        raise ValueError("pass both events_calendar and news rules, or neither")
     start = trade_start_ms if trade_start_ms is not None else candles[0].open_time
     end = trade_end_ms if trade_end_ms is not None else candles[-1].close_time
     kill = _SimKillSwitch(config.kill_switch_engaged)
@@ -179,6 +205,19 @@ def run_backtest(
     stopped = None
     last = len(candles) - 1
 
+    def fx_at(t: int) -> float:
+        """USD -> account rate usable at t: the point-in-time series if given, else the constant (assumption)."""
+        return fx_series.rate_at(t) if fx_series is not None else costs.usd_to_account
+
+    def news_at(t: int):
+        if events_calendar is None:
+            return None
+        return events_calendar.window_event(t, before_ms=news.before_ms, after_ms=news.after_ms, as_of_ms=t,
+                                            max_tier=news.max_tier)
+
+    def news_mult(*times: int) -> float:
+        return news.slippage_multiplier if any(news_at(t) is not None for t in times) else 1.0
+
     def closure_between(t0: int, t1: int) -> bool:
         return any(not is_open_at(calendar, t) for t in range(t0, t1, MINUTE_MS))
 
@@ -198,9 +237,10 @@ def run_backtest(
         tr.spread_cost_usd = (position.entry_spread if tr.side == "buy" else exit_spread) * oz * tr.lots
         tr.slippage_cost_usd += slip * oz * tr.lots
         tr.net_usd = tr.gross_usd - tr.commission_usd
-        tr.net_account = tr.net_usd * fx
+        tr.fx_exit = fx_at(tr.exit_time)  # FxError here fails the run: P&L cannot be converted honestly
+        tr.net_account = tr.gross_usd * tr.fx_exit - half_comm * tr.fx_entry - half_comm * tr.fx_exit
         tr.r_multiple = tr.net_account / tr.r_unit if tr.r_unit > 0 else float("nan")
-        realised += tr.gross_usd * fx - half_comm * fx  # entry half was charged at entry
+        realised += tr.gross_usd * tr.fx_exit - half_comm * tr.fx_exit  # entry half was charged at entry
         trades.append(tr)
         position = None
 
@@ -211,7 +251,8 @@ def run_backtest(
         ask_high = max(c.ask_high or 0.0, c.high + spread)
         ask_low = max(c.ask_low or 0.0, c.low + spread)
         ask_close = max(c.ask_close or 0.0, c.close + spread)
-        slip = costs.slippage_usd
+        slip = costs.slippage_usd * news_mult(b, e - 1)  # any part of the bar inside a news window
+        slip_close = costs.slippage_usd * news_mult(e)
 
         label = trading_day(b)
         in_period = start <= b < end
@@ -226,6 +267,7 @@ def run_backtest(
             if i >= j + 1 + config.latency_bars:
                 pending = None
                 earliest = candles[j].close_time + config.latency_bars * tf
+                rate_e = None  # set only when every eligibility check passes
                 if closure_between(candles[j].close_time, b):
                     events.append(Event(b, "expired_closure"))
                 elif b > earliest + config.max_fill_wait_ms:
@@ -234,7 +276,14 @@ def run_backtest(
                     events.append(Event(b, "expired_period_end"))
                 elif not is_open_at(calendar, b + buffer) or calendar.in_reopen_window(b, costs.reopen_minutes):
                     events.append(Event(b, "blocked_window"))
+                elif (ev := news_at(b)) is not None:
+                    events.append(Event(b, "blocked_news", ev.event_id))  # R2.6
                 else:
+                    try:
+                        rate_e = fx_at(b)
+                    except FxError as exc:
+                        events.append(Event(b, "blocked_fx", str(exc)))  # no published rate: cannot size
+                if rate_e is not None:
                     if sig.side == "buy":
                         fill = ask_open + slip
                         stop = _round_away(fill - sig.stop_usd, tick, -1)
@@ -248,18 +297,18 @@ def run_backtest(
                         TradeIntent(sig.side, fill, stop, b), spec,
                         AccountState(equity=realised, free_margin=realised, day_start_equity=day_start,
                                      peak_equity=peak, open_risk=0.0, trades_today=trades_today, verified_at_ms=b),
-                        limits, CostInputs(spread, slip, fx, costs.sources),
+                        limits, CostInputs(spread, slip, rate_e, costs.sources),
                         now_ms=b, mode=Mode.BACKTEST, kill_switch=kill)
                     if not decision.approved:
                         events.append(Event(b, "risk_rejected", ",".join(ch.rule for ch in decision.failed)))
                     else:
                         tr = Trade(sig.side, candles[j].close_time, b, fill, decision.lots, stop, tp,
-                                   decision.risk_account_ccy, trading_day=label)
+                                   decision.risk_account_ccy, trading_day=label, fx_entry=rate_e)
                         tr.r_unit = ((abs(fill - stop) + slip) * oz * decision.lots
-                                     + (sym.commission_per_lot_round_turn or 0.0) * decision.lots) * fx
+                                     + (sym.commission_per_lot_round_turn or 0.0) * decision.lots) * rate_e
                         tr.slippage_cost_usd = slip * oz * decision.lots
                         half_comm = (sym.commission_per_lot_round_turn or 0.0) / 2 * decision.lots
-                        realised -= half_comm * fx
+                        realised -= half_comm * rate_e
                         position = _Position(tr, i, spread)
                         trades_today += 1
                         events.append(Event(b, "filled", f"{sig.side} {decision.lots} lots @ {fill}"))
@@ -312,6 +361,9 @@ def run_backtest(
             reason = None
             if config.max_hold_bars is not None and i - position.entry_index + 1 >= config.max_hold_bars:
                 reason = "max_hold"
+            elif (news is not None and news.flat_before and events_calendar.window_event(
+                    e, before_ms=news.before_ms, after_ms=0, as_of_ms=e, max_tier=news.max_tier) is not None):
+                reason = "news_exit"  # R4.9: a known release starts within the pre-news window
             elif not is_open_at(calendar, e + buffer):
                 reason = "session_close"
             elif i == last:
@@ -319,8 +371,8 @@ def run_backtest(
             elif e >= end:
                 reason = "period_end"
             if reason:
-                price = c.close - slip if tr.side == "buy" else ask_close + slip
-                close_position(i, price, reason, slip)
+                price = c.close - slip_close if tr.side == "buy" else ask_close + slip_close
+                close_position(i, price, reason, slip_close)
 
         # ---- 4. mark to market (R6.2) ---------------------------------------------------------------
         unreal = 0.0
@@ -328,7 +380,7 @@ def run_backtest(
             tr = position.trade
             bars_in_pos += in_period
             mark = c.close if tr.side == "buy" else ask_close
-            unreal = (mark - tr.entry_price) * (1 if tr.side == "buy" else -1) * oz * tr.lots * fx
+            unreal = (mark - tr.entry_price) * (1 if tr.side == "buy" else -1) * oz * tr.lots * fx_at(e)
         mtm = realised + unreal
         peak = max(peak, mtm)
         if in_period:
@@ -362,4 +414,6 @@ def run_backtest(
     if not curve:  # nothing in period: keep the starting point so metrics are well-defined
         curve.append((start, mtm))
     return BacktestResult(trades, events, curve, daily, len(curve), bars_in_pos, eligible, decision_bars,
-                          config.initial_equity, fx, stopped)
+                          config.initial_equity, costs.usd_to_account,
+                          "ECB reference series (point-in-time)" if fx_series is not None else "constant (assumption)",
+                          stopped)
