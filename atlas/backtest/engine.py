@@ -286,12 +286,13 @@ def run_backtest(
                 if rate_e is not None:
                     if sig.side == "buy":
                         fill = ask_open + slip
-                        stop = _round_away(fill - sig.stop_usd, tick, -1)
-                        tp = _round_away(fill + sig.tp_usd, tick, -1) if sig.tp_usd else None
+                        # R3.2 (v2.4): levels are set from the QUOTE (ask for buys), as a real order is
+                        stop = _round_away(ask_open - sig.stop_usd, tick, -1)
+                        tp = _round_away(ask_open + sig.tp_usd, tick, -1) if sig.tp_usd else None
                     else:
                         fill = c.open - slip
-                        stop = _round_away(fill + sig.stop_usd, tick, +1)
-                        tp = _round_away(fill - sig.tp_usd, tick, +1) if sig.tp_usd else None
+                        stop = _round_away(c.open + sig.stop_usd, tick, +1)  # from the bid for sells
+                        tp = _round_away(c.open - sig.tp_usd, tick, +1) if sig.tp_usd else None
                     fill = round(fill, 10)
                     decision = evaluate(
                         TradeIntent(sig.side, fill, stop, b), spec,

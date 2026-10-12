@@ -25,7 +25,8 @@
 | Read-only MT5 adapter (`atlas mt5-check`) | Built; tested with a FAKE terminal on Windows/macOS/Linux CI; **not yet run against the real Vault terminal** | `test_mt5_readonly.py` |
 | Order preparation (no send capability) | Built | `test_orders.py` |
 | Cross-platform (Windows, macOS, Linux; Python 3.11–3.13) | **Verified by GitHub Actions** (9/9 jobs green) | `.github/workflows/tests.yml` |
-| Paper-trading executor (duplicate-order journal, reconnection, kill switch) | Not started (next) | — |
+| Paper-trading executor (persistent duplicate-order journal, fail-closed fills, restart recovery, emergency stop, connection monitor) | Built | `test_paper.py` |
+| Paper-trading session loop (strategy → gate → order preparation → paper fills) | Built; **identical to the backtester on the same data** | `test_paper_session.py` |
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
 Tests: **392 passed, 2 skipped (live, opt-in)** locally; CI green on Windows, macOS and Linux.

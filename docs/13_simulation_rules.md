@@ -1,4 +1,4 @@
-# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.3
+# 13 — Backtest simulation rules (XAU/USD, M1/M5) — v2.4
 
 *Author: quantitative researcher role. v1 was challenged by the independent reviewer (15 findings). This v2 adopts
 them as recorded in the table at the end. Where a rule could go either way, it leans toward overstating costs and
@@ -45,7 +45,10 @@ losses.*
 1. Market orders only.
    - Long fills at ask_open + slippage.
    - Short fills at bid_open − slippage.
-2. **Stop and take-profit:** given as distances in US$/oz from the fill price, then rounded to `tick_size`.
+2. **Stop and take-profit (v2.4):** given as distances in US$/oz from the **entry quote** (ask for buys, bid for
+   sells), as a real MT5 order sets them, then rounded to `tick_size`. Entry slippage therefore makes the effective
+   stop from the fill wider and the take-profit further away. This is the conservative direction. The risk gate
+   sizes against the exact rounded stop, measured from the expected fill.
    - The stop is rounded **away from** entry.
    - The take-profit is rounded **toward** entry.
    - A stop distance ≤ 0 is invalid. The take-profit is optional.
@@ -229,3 +232,10 @@ For ≥ 20 cut points T (including cuts adjacent to closures):
 | 4 / E | Regex scan had false positives and bypasses for request bodies | Replaced by a syntax-tree check (Request/urlopen bodies, custom openers, raw network/trading imports); word scan kept |
 | 5 | A test run that registers and then fails before producing results still uses up the look | Kept deliberately: conservative, because the run may already have read the data |
 | 5 | Opening the ledger always wrote | The back-fill writes only when rows are missing |
+
+## v2.4 change (2026-10-12)
+The paper-trading session (`atlas/broker/session.py`, which uses the real order-preparation path) and the backtester
+placed levels differently: from the quote versus from the fill. That made their equity and sizing diverge. The
+backtester now follows the real-order convention. `tests/test_paper_session.py` requires both to produce
+identical entries, sizes, exits, prices and final equity on the same data. The backtester's hand-calculated tests
+were recomputed by hand under v2.4.

@@ -72,21 +72,21 @@ def test_long_take_profit_matches_hand_calculation():
     bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.41, 2400.9, 2403.0)]
     r = run(bars, BUY)
     (t,) = r.trades
-    # fill = ask_open + slip = 2400.00 + 0.30 + 0.10 ; stop = 2398.40 ; tp = 2403.40
-    assert (t.entry_time, t.entry_price, t.stop, t.tp) == (T0 + M5, 2400.40, 2398.40, 2403.40)
-    # gate: per lot = (2.00 + 0.30 + 0.10) x 100 x 10 = 2400 ; 1000 / 2400 -> 0.41 lots
-    assert t.lots == pytest.approx(0.41) and t.planned_risk == pytest.approx(984.0)
-    assert (t.exit_reason, t.exit_price) == ("tp", 2403.40)
-    assert t.gross_usd == pytest.approx(123.0)           # 3.00 x 100 x 0.41
-    assert t.net_account == pytest.approx(1230.0)
-    assert t.spread_cost_usd == pytest.approx(12.3) and t.slippage_cost_usd == pytest.approx(4.1)
-    # R unit = (|2400.40 - 2398.40| + 0.10 slippage) x 100 oz x 0.41 x 10 = 861 (planned_risk 984 adds spread)
-    assert t.r_multiple == pytest.approx(1230 / 861)
-    assert r.equity_curve[-1][1] == pytest.approx(101_230.0)
+    # v2.4: ask = 2400.00 + 0.30 = 2400.30 ; fill = ask + slip = 2400.40 ; stop = ask - 2 = 2398.30 ; tp = 2403.30
+    assert (t.entry_time, t.entry_price, t.stop, t.tp) == (T0 + M5, 2400.40, 2398.30, 2403.30)
+    # gate: risk distance from fill 2.10 ; per lot = (2.10 + 0.30 + 0.10) x 100 x 10 = 2500 ; 1000 / 2500 -> 0.40
+    assert t.lots == pytest.approx(0.40) and t.planned_risk == pytest.approx(1000.0)
+    assert (t.exit_reason, t.exit_price) == ("tp", 2403.30)
+    assert t.gross_usd == pytest.approx(116.0)           # 2.90 x 100 x 0.40
+    assert t.net_account == pytest.approx(1160.0)
+    assert t.spread_cost_usd == pytest.approx(12.0) and t.slippage_cost_usd == pytest.approx(4.0)
+    # R unit = (2.10 + 0.10 slippage) x 100 oz x 0.40 x 10 = 880
+    assert t.r_multiple == pytest.approx(1160 / 880)
+    assert r.equity_curve[-1][1] == pytest.approx(101_160.0)
 
 
 def test_take_profit_requires_trading_through_by_one_tick():
-    bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.40, 2400.9, 2403.0)]
+    bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.30, 2400.9, 2403.0)]  # touches tp 2403.30, not through
     r = run(bars, BUY)
     assert r.trades[0].exit_reason == "end_of_data"
 
@@ -94,8 +94,8 @@ def test_take_profit_requires_trading_through_by_one_tick():
 def test_both_levels_in_one_bar_assumes_stop_first():
     bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2403.50, 2398.0, 2402.0)]
     (t,) = run(bars, BUY).trades
-    assert (t.exit_reason, t.exit_price) == ("stop", 2398.30)  # stop 2398.40 - slippage
-    assert t.net_account == pytest.approx((2398.30 - 2400.40) * 41 * 10)
+    assert (t.exit_reason, t.exit_price) == ("stop", 2398.20)  # stop 2398.30 - slippage
+    assert t.net_account == pytest.approx((2398.20 - 2400.40) * 40 * 10)
     assert t.r_multiple == pytest.approx(-1.0)  # a clean stop-out is exactly -1R (review finding 8)
 
 
@@ -103,32 +103,33 @@ def test_gap_through_stop_fills_at_open_and_r_is_not_capped():
     bars = base_bars() + [bar(T0 + 2 * M5, 2397.0, 2397.5, 2396.5, 2397.2)]
     (t,) = run(bars, BUY).trades
     assert (t.exit_reason, t.exit_price) == ("stop_gap", 2396.90)
-    assert t.net_account == pytest.approx(-1435.0)
-    assert t.r_multiple == pytest.approx(-1435 / 861) and t.r_multiple < -1
+    assert t.net_account == pytest.approx(-1400.0)          # (2396.90 - 2400.40) x 40 oz x 10
+    assert t.r_multiple == pytest.approx(-1400 / 880) and t.r_multiple < -1
 
 
 def test_gap_through_take_profit_fills_at_tp_only():
     bars = base_bars() + [bar(T0 + 2 * M5, 2405.0, 2406.0, 2404.5, 2405.5)]
     (t,) = run(bars, BUY).trades
-    assert (t.exit_reason, t.exit_price) == ("tp_gap", 2403.40)
+    assert (t.exit_reason, t.exit_price) == ("tp_gap", 2403.30)
 
 
 def test_short_uses_ask_for_stop_and_take_profit():
-    # fill = bid_open - slip = 2399.90 ; stop = 2401.90 ; tp = 2396.90 ; ask = bid + 0.30
+    # v2.4: fill = bid - slip = 2399.90 ; stop = bid + 2 = 2402.00 ; tp = bid - 3 = 2397.00 ; ask = bid + 0.30
     tp_bars = base_bars() + [bar(T0 + 2 * M5, 2399.0, 2400.0, 2396.59, 2397.0)]  # ask_low 2396.89 <= tp - tick
     (t,) = run(tp_bars, SELL).trades
-    assert (t.entry_price, t.stop, t.tp, t.exit_reason, t.exit_price) == (2399.90, 2401.90, 2396.90, "tp", 2396.90)
-    assert t.gross_usd == pytest.approx(123.0) and t.spread_cost_usd == pytest.approx(12.3)
-    stop_bars = base_bars() + [bar(T0 + 2 * M5, 2400.0, 2401.60, 2399.5, 2400.0)]  # ask_high 2401.90
+    assert (t.entry_price, t.stop, t.tp, t.exit_reason, t.exit_price) == (2399.90, 2402.00, 2397.00, "tp", 2397.00)
+    assert t.lots == pytest.approx(0.40)
+    assert t.gross_usd == pytest.approx(116.0) and t.spread_cost_usd == pytest.approx(12.0)
+    stop_bars = base_bars() + [bar(T0 + 2 * M5, 2400.0, 2401.70, 2399.5, 2400.0)]  # ask_high 2402.00 = stop
     (s,) = run(stop_bars, SELL).trades
-    assert (s.exit_reason, s.exit_price) == ("stop", 2402.00)
+    assert (s.exit_reason, s.exit_price) == ("stop", 2402.10)
 
 
 def test_stop_and_tp_rounded_to_ticks_conservatively():
-    # long fill 2400.40 ; stop distance 2.005 -> 2398.395 rounded DOWN (away) to 2398.39 ; tp 3.005 -> 2403.405 DOWN to 2403.40
+    # long from ask 2400.30: stop 2.005 -> 2398.295 rounded DOWN (away) to 2398.29 ; tp 3.005 -> 2403.305 DOWN to 2403.30
     bars = base_bars() + [bar(T0 + 2 * M5, 2401.0, 2401.5, 2400.9, 2401.0)]
     (t,) = run(bars, {0: Signal("buy", 2.005, 3.005)}).trades
-    assert (t.stop, t.tp) == (2398.39, 2403.40)
+    assert (t.stop, t.tp) == (2398.29, 2403.30)
 
 
 def test_fill_is_next_bar_never_signal_bar_and_latency_delays_it():
@@ -232,9 +233,9 @@ def test_commission_charged_half_each_side(tmp_path):
     r = run_backtest(bars, Scripted(BUY), spec=spec, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
                      config=EngineConfig(initial_equity=100_000.0))
     (t,) = r.trades
-    # per lot = 2400 + 7 x 10 = 2470 -> 0.40 lots ; commission 7 x 0.40 = 2.80 USD
-    assert t.lots == pytest.approx(0.40) and t.commission_usd == pytest.approx(2.80)
-    assert t.net_account == pytest.approx((3.0 * 100 * 0.40 - 2.80) * 10)
+    # per lot = 2500 + 7 x 10 = 2570 -> 0.38 lots ; commission 7 x 0.38 = 2.66 USD
+    assert t.lots == pytest.approx(0.38) and t.commission_usd == pytest.approx(2.66)
+    assert t.net_account == pytest.approx((2.90 * 100 * 0.38 - 2.66) * 10)
     assert r.equity_curve[-1][1] == pytest.approx(100_000 + t.net_account)
 
 
@@ -252,14 +253,14 @@ def test_metrics_definitions():
     m = compute_metrics(run(bars, BUY))
     assert m["trades"] == 1 and m["win_rate"] == 1.0
     assert m["profit_factor"] == "undefined (0 losses)"
-    assert m["net_pnl"] == pytest.approx(1230.0) and m["net_pnl_usd"] == pytest.approx(123.0)
+    assert m["net_pnl"] == pytest.approx(1160.0) and m["net_pnl_usd"] == pytest.approx(116.0)
     assert m["sharpe"] is None and "trading days" in m["sharpe_note"]
-    assert m["costs_per_trade_r"] == pytest.approx((12.3 + 4.1) * 10 / 861)
+    assert m["costs_per_trade_r"] == pytest.approx((12.0 + 4.0) * 10 / 880)
     loss_bars = base_bars() + [bar(T0 + 2 * M5, 2397.0, 2397.5, 2396.5, 2397.2)]
     ml = compute_metrics(run(loss_bars, BUY))
-    # mark-to-market peak includes bar 1's open gain: (2400.80 - 2400.40) x 41 oz x 10 = 164
-    assert ml["max_drawdown"] == pytest.approx(1435.0 + 164.0) and ml["drawdown_unrecovered_at_end"] is True
-    assert ml["avg_loss"] == pytest.approx(-1435.0) and ml["avg_win"] is None
+    # mark-to-market peak includes bar 1's open gain: (2400.80 - 2400.40) x 40 oz x 10 = 160
+    assert ml["max_drawdown"] == pytest.approx(1400.0 + 160.0) and ml["drawdown_unrecovered_at_end"] is True
+    assert ml["avg_loss"] == pytest.approx(-1400.0) and ml["avg_win"] is None
 
 
 # ---- review findings (backtester) ---------------------------------------------------------------------
@@ -364,8 +365,8 @@ def test_fx_series_used_for_sizing_and_conversion_point_in_time():
     r = run_backtest(bars, Scripted(BUY), spec=SPEC, limits=LIMITS, costs=COSTS, calendar=XauCfd(),
                      config=EngineConfig(initial_equity=100_000.0), fx_series=fx)
     (t,) = r.trades
-    assert t.fx_entry == 10.0 and t.lots == pytest.approx(0.41)      # sized with the rate known at entry
-    assert t.fx_exit == 20.0 and t.net_account == pytest.approx(123.0 * 20)  # converted at the exit-time rate
+    assert t.fx_entry == 10.0 and t.lots == pytest.approx(0.40)      # sized with the rate known at entry
+    assert t.fx_exit == 20.0 and t.net_account == pytest.approx(116.0 * 20)  # converted at the exit-time rate
     assert r.fx_source.startswith("ECB")
 
 
