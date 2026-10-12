@@ -250,6 +250,43 @@ def cmd_fx_update(settings, args) -> int:
     return 0
 
 
+def cmd_mt5_check(settings, args) -> int:
+    """Read-only check against the local MT5 terminal (Windows). Never trades, never handles credentials."""
+    from .broker.mt5_readonly import BrokerReadError, Mt5ReadOnly, ReadOnlyViolation, spec_toml_from_snapshots
+
+    try:
+        ro = Mt5ReadOnly()
+        acc = ro.connect()
+    except (BrokerReadError, ReadOnlyViolation) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    try:
+        masked = f"***{str(acc.login)[-3:]}"
+        print(f"account   : {masked} on {acc.server} ({acc.company}); mode={acc.trade_mode}; "
+              f"trading allowed in this session={acc.trade_allowed}")
+        print(f"balance   : {acc.balance:.2f} {acc.currency}; equity {acc.equity:.2f}; free margin {acc.margin_free:.2f}; "
+              f"leverage 1:{acc.leverage:g}; margin call {acc.margin_so_call:g}%; stop-out {acc.margin_so_so:g}%")
+        sym = ro.symbol_snapshot(args.symbol)
+        print(f"symbol    : {sym.name}: contract {sym.contract_size:g}, digits {sym.digits}, tick {sym.tick_size:g} "
+              f"(value {sym.tick_value:g} {acc.currency}), volume {sym.volume_min:g}..{sym.volume_max:g} step "
+              f"{sym.volume_step:g}, stops level {sym.stops_level_points} pts, freeze {sym.freeze_level_points} pts")
+        print(f"            swap long {sym.swap_long:g} / short {sym.swap_short:g} (triple day {sym.swap_rollover3days}), "
+              f"spread {sym.spread_points} pts ({'floating' if sym.spread_float else 'fixed'})")
+        t = ro.tick(args.symbol)
+        print(f"quote     : bid {t.bid} ask {t.ask} spread {t.spread:.2f} (server time {t.time_server_s})")
+        pos = ro.positions(args.symbol)
+        print(f"positions : {len(pos)} open on {args.symbol}")
+        if args.write_spec:
+            out = settings.root / args.write_spec
+            out.write_text(spec_toml_from_snapshots(sym, acc, broker="Vault Markets",
+                                                    server_time_model=args.server_time_model,
+                                                    source_note="atlas mt5-check"), encoding="utf-8")
+            print(f"spec      : written to {out} (add commission before it will load; see docs/14)")
+    finally:
+        ro.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="atlas", description="Project Atlas research data tools (no trading).")
     p.add_argument("--config", default="atlas.toml", help="path to atlas.toml (default: ./atlas.toml)")
@@ -316,6 +353,12 @@ def build_parser() -> argparse.ArgumentParser:
     fx.add_argument("--start", required=True)
     fx.add_argument("--end")
 
+    mc = sub.add_parser("mt5-check", help="read-only check of the local MT5 terminal (Windows; never trades)")
+    mc.add_argument("--symbol", default="XAUUSD")
+    mc.add_argument("--write-spec", help="write a verified spec file from the terminal, e.g. config/brokers/vault_live.toml")
+    mc.add_argument("--server-time-model", default="ny_close_midnight",
+                    help="must already have passed the export check (docs/10); recorded in the spec")
+
     runs = sub.add_parser("runs", help="list ingestion runs")
     runs.add_argument("--limit", type=int, default=20)
     return p
@@ -323,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 COMMANDS = {"instruments": cmd_instruments, "ingest": cmd_ingest, "validate": cmd_validate,
             "show": cmd_show, "runs": cmd_runs, "risk-feasibility": cmd_risk_feasibility,
-            "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
+            "backtest": cmd_backtest, "health": cmd_health, "fx-update": cmd_fx_update, "mt5-check": cmd_mt5_check, "experiments": cmd_experiments, "random-baseline": cmd_random_baseline}
 
 
 def main(argv: list[str] | None = None) -> int:

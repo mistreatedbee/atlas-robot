@@ -16,7 +16,7 @@ data is ingested or displayed.
 | Session model | `xau_cfd`: weekly closure Fri 17:00 → Sun 18:00 New York; daily break 17:00–18:00 New York, Mon–Thu |
 | Rows | 5,510 (4 weeks × 115 trading hours × 12 bars − 10 removed bars) |
 | Primary prices | Bid OHLC (2 decimals); ask OHLC in `ask_*` (spread US$0.15–0.35; US$0.40–0.90 at 22:00–23:59 UTC) |
-| SHA-256 | `60d010a7a206dc29005f12d0c4d93ed62fb71b3ba46289c1ce98964033d3462a` |
+| SHA-256 | `cb89d6051493725b0d798d5a02786d5d2d15770d35ba3d57136ba9f43b01a302 (LF line endings on every OS)` |
 
 ## Deliberately injected defects
 

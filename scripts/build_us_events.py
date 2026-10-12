@@ -90,7 +90,7 @@ def main() -> None:
     rows.sort(key=lambda r: utc_ms(r[2], r[3]))
     out = Path(__file__).resolve().parents[1] / "config" / "events" / "us_tier1.csv"
     with out.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, lineterminator="\n")  # LF on every OS (matches .gitattributes)
         w.writerow(["event_id", "category", "tier", "reference", "release_ny", "release_utc_ms",
                     "known_since_utc_ms", "source", "notes"])
         for cat, ref, day, at, src, note in rows:

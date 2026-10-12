@@ -83,7 +83,7 @@ def main() -> None:
         rows.append(row)
 
     with out.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
+        w = csv.writer(fh, lineterminator="\n")  # LF on every OS (matches .gitattributes)
         w.writerow(["time", "open", "high", "low", "close", "volume", "ask_open", "ask_high", "ask_low", "ask_close"])
         w.writerows(rows)
     print(f"wrote {len(rows)} rows to {out}")

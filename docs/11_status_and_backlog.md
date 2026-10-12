@@ -22,10 +22,13 @@
 | Daily USD/ZAR (ECB reference rates, point-in-time) | Done; used by the engine | `test_fx.py` |
 | Baselines (no-trade, matched random, session-long) + R10 leakage harness | Done | `test_baselines_leakage.py` |
 | Health check (`atlas health`) | Done | `test_monitoring.py` |
-| Paper-trading simulator | Not started | — |
+| Read-only MT5 adapter (`atlas mt5-check`) | Built; tested with a FAKE terminal on Windows/macOS/Linux CI; **not yet run against the real Vault terminal** | `test_mt5_readonly.py` |
+| Order preparation (no send capability) | Built | `test_orders.py` |
+| Cross-platform (Windows, macOS, Linux; Python 3.11–3.13) | **Verified by GitHub Actions** (9/9 jobs green) | `.github/workflows/tests.yml` |
+| Paper-trading executor (duplicate-order journal, reconnection, kill switch) | Not started (next) | — |
 | Live execution | **Does not exist, by design** | No live mode in code; safety tests |
 
-Tests: **355 passed, 2 skipped (live, opt-in)**; the live tests pass when enabled.
+Tests: **392 passed, 2 skipped (live, opt-in)** locally; CI green on Windows, macOS and Linux.
 Version control: git; remote https://github.com/mistreatedbee/atlas-robot (PUBLIC, by owner's decision 2026-10-11).
 
 ## Backlog (priority order)

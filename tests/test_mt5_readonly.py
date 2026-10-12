@@ -169,3 +169,33 @@ def test_package_loader_refuses_off_windows(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     with pytest.raises(BrokerReadError, match="Windows"):
         load_mt5_module()
+
+
+def test_cli_mt5_check_with_fake_terminal(monkeypatch, tmp_path, capsys):
+    from atlas import cli
+    from atlas.broker import mt5_readonly
+    fake = FakeMt5(trade_mode=2, trade_allowed=False)
+    monkeypatch.setattr(mt5_readonly, "load_mt5_module", lambda: fake)
+    (tmp_path / "atlas.toml").write_text('[scope]\nauthorised_instruments = ["XAUUSD"]\n', encoding="utf-8")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "instruments.toml").write_text(
+        '[[instrument]]\nid = "XAUUSD"\nasset_class = "metal_spot"\nbase = "XAU"\nquote = "USD"\n'
+        'session_calendar = "xau_cfd"\n', encoding="utf-8")
+    rc = cli.main(["--config", str(tmp_path / "atlas.toml"), "mt5-check", "--write-spec", "spec_live.toml"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "***345" in out and "12345" not in out  # account number masked
+    assert "mode=real" in out and "trading allowed in this session=False" in out
+    assert (tmp_path / "spec_live.toml").exists() and fake.sent_orders == []
+
+
+def test_cli_mt5_check_refuses_trading_enabled_real_account(monkeypatch, tmp_path, capsys):
+    from atlas import cli
+    from atlas.broker import mt5_readonly
+    monkeypatch.setattr(mt5_readonly, "load_mt5_module", lambda: FakeMt5(trade_mode=2, trade_allowed=True))
+    (tmp_path / "atlas.toml").write_text('[scope]\nauthorised_instruments = ["XAUUSD"]\n', encoding="utf-8")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "instruments.toml").write_text(
+        '[[instrument]]\nid = "XAUUSD"\nasset_class = "metal_spot"\nbase = "XAU"\nquote = "USD"\n'
+        'session_calendar = "xau_cfd"\n', encoding="utf-8")
+    assert cli.main(["--config", str(tmp_path / "atlas.toml"), "mt5-check"]) == 2
+    assert "INVESTOR" in capsys.readouterr().err
