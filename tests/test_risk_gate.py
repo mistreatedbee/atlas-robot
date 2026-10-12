@@ -141,3 +141,28 @@ def test_feasibility_table_for_r500():
     rows = feasibility(SPEC, 500.0, [0.5, 1.0, 3.0], COSTS, LIMITS)
     assert [round(r.risk_at_min_volume, 2) for r in rows] == [14.94, 23.24, 56.44]
     assert [r.permitted for r in rows] == [False, False, False]
+
+
+def test_micro_style_contract_is_sized_from_the_spec(tmp_path, clear_switch):
+    """SCENARIO only (not Vault facts): 1 oz per lot, 0.10 lot minimum, 0.01 step - how a micro account MIGHT look.
+    The gate must size from the spec's contract size and steps, nothing hard-coded to 100 oz lots."""
+    text = (ROOT / "config/brokers/PROVISIONAL_dev_xauusd.toml").read_text(encoding="utf-8")
+    text = (text.replace("contract_size = 100.0", "contract_size = 1.0").replace("tick_value = 1.0", "tick_value = 0.01")
+            .replace("volume_min = 0.01", "volume_min = 0.10"))
+    (tmp_path / "micro.toml").write_text(text, encoding="utf-8")
+    micro = load_spec(tmp_path / "micro.toml")
+    costs = replace(COSTS, usd_to_account=16.53)
+    d = run(buy(2.0), account(500), spec=micro, costs=costs, switch=clear_switch)
+    # per lot: (2.00 + 0.30 + 0.10) x 1 oz x 16.53 = 39.672 ; budget R5 -> floor(5 / 39.672 / 0.01) = 12 steps
+    assert d.approved and d.lots == pytest.approx(0.12) and d.risk_fraction <= 0.01
+    # with the 10 oz/lot reading, the same R500 trade is rejected at the 1% limit
+    big = load_spec_from_text(tmp_path, text.replace("contract_size = 1.0", "contract_size = 10.0")
+                              .replace("tick_value = 0.01", "tick_value = 0.1"))
+    assert "minimum_volume_within_risk_limit" in failed_rules(run(buy(2.0), account(500), spec=big, costs=costs,
+                                                                  switch=clear_switch))
+
+
+def load_spec_from_text(tmp_path, text):
+    f = tmp_path / "s2.toml"
+    f.write_text(text, encoding="utf-8")
+    return load_spec(f)
